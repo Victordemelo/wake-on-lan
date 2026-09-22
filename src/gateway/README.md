@@ -1,6 +1,6 @@
 # Gateway
 
-Componente planejado para permanecer dentro da rede local, receber pedidos autenticados da API e enviar Magic Packets por broadcast. Será o caminho recomendado para Tailscale, CGNAT e Docker Desktop.
+Componente para permanecer ligado dentro da rede local, receber pedidos autenticados da API e enviar Magic Packets por broadcast.
 
-O gateway deverá iniciar a conexão com a API, ter identidade própria, suportar revogação e nunca aceitar pacotes arbitrários sem autorização.
+O gateway usa `src/worker` em modo `gateway`. Ele abre uma conexão de saída com a API, recebe somente pedidos autenticados e envia Magic Packets para destinos configurados em `REMOTE_WAKE_ALLOWED_BROADCASTS`. Consulte [o guia de instalação](../../docs/REMOTE_SETUP.md).
 

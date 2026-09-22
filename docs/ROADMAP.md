@@ -11,21 +11,23 @@
 
 ## Fase 2 — Gateway remoto
 
-- identidade e pareamento de gateway;
-- conexão de saída via WebSocket/SignalR;
-- associação entre máquina e gateway;
-- retransmissão de broadcast na LAN;
-- instruções para Tailscale e Docker;
-- rotação e revogação de chaves.
+- [x] chave manual vinculada ao proprietário;
+- [x] conexão de saída por long polling;
+- [x] retransmissão de broadcast na LAN com destinos permitidos;
+- [x] instruções para Tailscale e Docker Linux;
+- [ ] pareamento por código e múltiplos gateways;
+- [ ] rotação e revogação individual de chaves;
+- [ ] teste real na rede residencial.
 
 ## Fase 3 — Agente Windows/Linux
 
-- instalador e pareamento;
-- presença online/offline;
-- desligar, reiniciar, suspender e hibernar;
-- comandos definidos localmente por ID;
-- confirmação, timeout e auditoria;
-- Windows Service e unidade systemd.
+- [x] chave de agente por máquina;
+- [x] presença online/offline por contato recente;
+- [x] desligar e reiniciar com confirmação e timeout;
+- [x] worker compatível com Windows Service e systemd;
+- [ ] instaladores e teste real em Windows/Linux;
+- [ ] suspender, hibernar e ações locais cadastradas;
+- [ ] auditoria persistente e visível no painel.
 
 ## Fase 4 — Produção
 

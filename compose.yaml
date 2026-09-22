@@ -27,6 +27,10 @@ services:
       Jwt__Key: ${JWT_KEY:?Set JWT_KEY in .env}
       Jwt__Issuer: ${JWT_ISSUER:-RemoteWake}
       Jwt__Audience: ${JWT_AUDIENCE:-RemoteWake.Web}
+      Gateway__Key: ${GATEWAY_KEY:-}
+      Gateway__OwnerEmail: ${GATEWAY_OWNER_EMAIL:-}
+      Agent__MasterKey: ${AGENT_MASTER_KEY:-}
+      Registration__Open: ${ALLOW_REGISTRATION:-false}
       Cors__Origins__0: http://localhost:8005
     depends_on:
       database:
@@ -37,7 +41,7 @@ services:
       timeout: 5s
       retries: 10
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   web:
     build:
@@ -48,7 +52,20 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "8005:80"
+      - "127.0.0.1:8005:80"
+
+  gateway:
+    profiles: ["gateway-linux"]
+    build:
+      context: .
+      dockerfile: src/worker/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      REMOTE_WAKE_MODE: gateway
+      REMOTE_WAKE_API_URL: ${REMOTE_WAKE_API_URL:-http://127.0.0.1:8080/}
+      REMOTE_WAKE_KEY: ${GATEWAY_KEY:-}
+      REMOTE_WAKE_ALLOWED_BROADCASTS: ${GATEWAY_ALLOWED_BROADCASTS:-}
 
 volumes:
   postgres-data:

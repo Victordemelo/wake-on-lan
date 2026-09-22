@@ -1,73 +1,16 @@
-import { ReactNode, useRef } from 'react'
-import { motion, useReducedMotion, useScroll, useTransform } from 'framer-motion'
-import { ArrowDown, Code2, Globe2, Monitor, Network, Radio, Server, ShieldCheck } from 'lucide-react'
+import { ReactNode } from 'react'
+import { Code2, Globe2, Monitor, Network, Radio, Server, ShieldCheck } from 'lucide-react'
 
-interface ScrollExpansionHeroProps {
-  children?: ReactNode
-}
-
-export default function ScrollExpansionHero({ children }: ScrollExpansionHeroProps) {
-  const trackRef = useRef<HTMLDivElement>(null)
-  const reduceMotion = useReducedMotion()
-  const { scrollYProgress } = useScroll({
-    target: trackRef,
-    offset: ['start start', 'end end'],
-  })
-
-  const mediaWidth = useTransform(
-    scrollYProgress,
-    [0, 0.72],
-    reduceMotion ? ['min(1160px, 94vw)', 'min(1160px, 94vw)'] : ['min(360px, 84vw)', 'min(1160px, 94vw)'],
-  )
-  const mediaHeight = useTransform(
-    scrollYProgress,
-    [0, 0.72],
-    reduceMotion ? ['78vh', '78vh'] : ['440px', '78vh'],
-  )
-  const mediaRadius = useTransform(scrollYProgress, [0, 0.72], ['28px', '18px'])
-  const titleLeftOffset = useTransform(
-    scrollYProgress,
-    [0, 0.58],
-    reduceMotion ? ['0vw', '0vw'] : ['0vw', '-8vw'],
-  )
-  const titleRightOffset = useTransform(
-    scrollYProgress,
-    [0, 0.58],
-    reduceMotion ? ['0vw', '0vw'] : ['0vw', '8vw'],
-  )
-  const titleOpacity = useTransform(scrollYProgress, [0, 0.38, 0.62], [1, 0.92, 0])
-  const titleScale = useTransform(scrollYProgress, [0, 0.58], [1, 1.04])
-  const overlayOpacity = useTransform(scrollYProgress, [0, 0.72], [0.52, 0.1])
-  const interfaceScale = useTransform(scrollYProgress, [0, 0.72], [0.83, 1])
-  const interfaceOpacity = useTransform(scrollYProgress, [0.12, 0.72], [0.45, 1])
-  const cueOpacity = useTransform(scrollYProgress, [0, 0.24], [1, 0])
-
+export default function ProjectShowcase({ children }: { children?: ReactNode }) {
   return (
     <section className="project-showcase" id="project">
-      <div className="showcase-track" ref={trackRef}>
-      <div className="showcase-sticky">
-        <motion.div
-          className="showcase-heading"
-          aria-hidden="true"
-          style={{ opacity: titleOpacity, scale: titleScale }}
-        >
-          <motion.span style={{ x: titleLeftOffset }}>REMOTE</motion.span>
-          <motion.span style={{ x: titleRightOffset }}>WAKE</motion.span>
-        </motion.div>
-
-        <motion.div
-          className="showcase-media"
-          style={{ width: mediaWidth, height: mediaHeight, borderRadius: mediaRadius }}
-        >
+      <div className="showcase-track">
+        <div className="showcase-media">
           <div className="showcase-grid" />
-          <motion.div className="showcase-overlay" style={{ opacity: overlayOpacity }} />
           <div className="showcase-orb showcase-orb-one" />
           <div className="showcase-orb showcase-orb-two" />
 
-          <motion.div
-            className="showcase-interface"
-            style={{ scale: interfaceScale, opacity: interfaceOpacity }}
-          >
+          <div className="showcase-interface">
             <div className="showcase-interface-top">
               <div className="showcase-mini-brand">
                 <span><img src="/brand/remote-wake-mark.svg" alt="" /></span>
@@ -78,7 +21,7 @@ export default function ScrollExpansionHero({ children }: ScrollExpansionHeroPro
 
             <div className="showcase-copy">
               <span>OPEN SOURCE · SELF-HOSTED</span>
-              <h2>Controle começa<br />com um único pacote.</h2>
+              <h1>Controle começa<br />com um único pacote.</h1>
               <p>Wake-on-LAN, acesso remoto e automação reunidos em uma plataforma criada para a comunidade.</p>
             </div>
 
@@ -95,13 +38,8 @@ export default function ScrollExpansionHero({ children }: ScrollExpansionHeroPro
               <span><Network size={14} /> Multiplataforma</span>
               <span><Code2 size={14} /> Código aberto</span>
             </div>
-          </motion.div>
-        </motion.div>
-
-        <motion.div className="scroll-cue" style={{ opacity: cueOpacity }}>
-          <span>ROLE PARA EXPANDIR</span><ArrowDown size={16} />
-        </motion.div>
-      </div>
+          </div>
+        </div>
       </div>
 
       <div className="showcase-story">

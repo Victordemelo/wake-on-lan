@@ -24,7 +24,10 @@ public sealed record MachineResponse(
     int WolPort,
     WakeMethod WakeMethod,
     DateTimeOffset? LastWakeRequestedAt,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    bool AgentOnline,
+    bool GatewayOnline);
 
 public sealed record WakeResponse(bool Succeeded, string Message, DateTimeOffset RequestedAt);
+public sealed record ActionRequest(string Action);
 

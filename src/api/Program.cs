@@ -20,6 +20,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<MagicPacketService>();
+builder.Services.AddSingleton<RemoteJobBroker>();
+builder.Services.AddSingleton<WorkerKeys>();
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
@@ -70,12 +72,14 @@ if (app.Environment.IsDevelopment())
 app.MapHealthChecks("/health");
 
 var auth = app.MapGroup("/api/auth");
+var registrationGate = new SemaphoreSlim(1, 1);
 
 auth.MapPost("/register", async (
     RegisterRequest request,
     AppDbContext database,
     IPasswordHasher<User> passwordHasher,
-    TokenService tokens) =>
+    TokenService tokens,
+    IConfiguration configuration) =>
 {
     var name = request.Name.Trim();
     var email = request.Email.Trim().ToLowerInvariant();
@@ -88,19 +92,28 @@ auth.MapPost("/register", async (
         });
     }
 
-    if (await database.Users.AnyAsync(user => user.Email == email))
+    await registrationGate.WaitAsync();
+    try
     {
-        return Results.Conflict(new { message = "Este e-mail já está cadastrado." });
+        if (await database.Users.AnyAsync(user => user.Email == email))
+            return Results.Conflict(new { message = "Este e-mail já está cadastrado." });
+        if (!configuration.GetValue<bool>("Registration:Open")
+            && await database.Users.AnyAsync())
+            return Results.Problem("O cadastro está fechado. O administrador pode habilitá-lo temporariamente.", statusCode: 403);
+
+        var user = new User { Name = name, Email = email, PasswordHash = string.Empty };
+        user.PasswordHash = passwordHasher.HashPassword(user, request.Password);
+        database.Users.Add(user);
+        await database.SaveChangesAsync();
+
+        return Results.Ok(new AuthResponse(
+            tokens.Create(user),
+            new UserResponse(user.Id, user.Name, user.Email)));
     }
-
-    var user = new User { Name = name, Email = email, PasswordHash = string.Empty };
-    user.PasswordHash = passwordHasher.HashPassword(user, request.Password);
-    database.Users.Add(user);
-    await database.SaveChangesAsync();
-
-    return Results.Ok(new AuthResponse(
-        tokens.Create(user),
-        new UserResponse(user.Id, user.Name, user.Email)));
+    finally
+    {
+        registrationGate.Release();
+    }
 });
 
 auth.MapPost("/login", async (
@@ -125,30 +138,27 @@ auth.MapPost("/login", async (
 
 var machines = app.MapGroup("/api/machines").RequireAuthorization();
 
-machines.MapGet("/", async (ClaimsPrincipal principal, AppDbContext database) =>
+machines.MapGet("/", async (ClaimsPrincipal principal, AppDbContext database,
+    RemoteJobBroker jobs, WorkerKeys keys) =>
 {
     var userId = GetUserId(principal);
-    var result = await database.Machines
+    var ownerEmail = await database.Users.Where(user => user.Id == userId)
+        .Select(user => user.Email).SingleAsync();
+    var gatewayOnline = keys.GatewayConfigured && keys.GatewayOwnerEmail == ownerEmail && jobs.GatewayOnline;
+    var result = (await database.Machines
         .Where(machine => machine.OwnerId == userId)
         .OrderBy(machine => machine.Name)
-        .Select(machine => new MachineResponse(
-            machine.Id,
-            machine.Name,
-            machine.MacAddress,
-            machine.Hostname,
-            machine.BroadcastAddress,
-            machine.WolPort,
-            machine.WakeMethod,
-            machine.LastWakeRequestedAt,
-            machine.CreatedAt))
-        .ToListAsync();
+        .ToListAsync())
+        .Select(machine => ToResponse(machine, jobs.AgentOnline(machine.Id), gatewayOnline))
+        .ToList();
     return Results.Ok(result);
 });
 
 machines.MapPost("/", async (
     MachineRequest request,
     ClaimsPrincipal principal,
-    AppDbContext database) =>
+    AppDbContext database,
+    RemoteJobBroker jobs) =>
 {
     if (!ValidateMachine(request, out var normalizedMac, out var error))
     {
@@ -167,14 +177,15 @@ machines.MapPost("/", async (
     };
     database.Machines.Add(machine);
     await database.SaveChangesAsync();
-    return Results.Created($"/api/machines/{machine.Id}", ToResponse(machine));
+    return Results.Created($"/api/machines/{machine.Id}", ToResponse(machine, false, false));
 });
 
 machines.MapPut("/{id:guid}", async (
     Guid id,
     MachineRequest request,
     ClaimsPrincipal principal,
-    AppDbContext database) =>
+    AppDbContext database,
+    RemoteJobBroker jobs) =>
 {
     var machine = await FindOwnedMachine(id, principal, database);
     if (machine is null) return Results.NotFound();
@@ -188,7 +199,7 @@ machines.MapPut("/{id:guid}", async (
     machine.WolPort = request.WolPort;
     machine.WakeMethod = request.WakeMethod;
     await database.SaveChangesAsync();
-    return Results.Ok(ToResponse(machine));
+    return Results.Ok(ToResponse(machine, jobs.AgentOnline(machine.Id), false));
 });
 
 machines.MapDelete("/{id:guid}", async (
@@ -208,6 +219,8 @@ machines.MapPost("/{id:guid}/wake", async (
     ClaimsPrincipal principal,
     AppDbContext database,
     MagicPacketService magicPacket,
+    RemoteJobBroker jobs,
+    WorkerKeys keys,
     CancellationToken cancellationToken) =>
 {
     var machine = await FindOwnedMachine(id, principal, database);
@@ -219,7 +232,20 @@ machines.MapPost("/{id:guid}/wake", async (
 
     if (machine.WakeMethod == WakeMethod.TailscaleGateway)
     {
-        message = "O gateway Tailscale ainda não foi pareado. Esse modo será habilitado na próxima fase.";
+        var ownerEmail = await database.Users.Where(user => user.Id == machine.OwnerId)
+            .Select(user => user.Email).SingleAsync(cancellationToken);
+        if (!keys.GatewayConfigured || keys.GatewayOwnerEmail != ownerEmail)
+            message = "Configure a chave e o e-mail do proprietário do gateway na API.";
+        else if (!jobs.GatewayOnline)
+            message = "O gateway residencial está offline.";
+        else
+        {
+            var result = await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), machine.Id, "wake",
+                machine.MacAddress, machine.BroadcastAddress, machine.WolPort), true, cancellationToken);
+            success = result.Succeeded;
+            message = result.Message;
+            if (success) machine.LastWakeRequestedAt = requestedAt;
+        }
     }
     else try
     {
@@ -248,6 +274,66 @@ machines.MapPost("/{id:guid}/wake", async (
     return success
         ? Results.Ok(new WakeResponse(true, message, requestedAt))
         : Results.BadRequest(new WakeResponse(false, message, requestedAt));
+});
+
+machines.MapPost("/{id:guid}/agent-key", async (Guid id, ClaimsPrincipal principal,
+    AppDbContext database, WorkerKeys keys) =>
+{
+    if (await FindOwnedMachine(id, principal, database) is null) return Results.NotFound();
+    var key = keys.AgentKey(id);
+    return key is null ? Results.Problem("Configure Agent:MasterKey na API.", statusCode: 503)
+        : Results.Ok(new { machineId = id, key });
+});
+
+machines.MapPost("/{id:guid}/actions", async (Guid id, ActionRequest request,
+    ClaimsPrincipal principal, AppDbContext database, RemoteJobBroker jobs,
+    ILogger<Program> logger, CancellationToken cancellationToken) =>
+{
+    if (await FindOwnedMachine(id, principal, database) is null) return Results.NotFound();
+    if (request.Action is not ("shutdown" or "restart"))
+        return Results.BadRequest(new { message = "Ação não permitida." });
+    if (!jobs.AgentOnline(id))
+        return Results.Problem("O agente da máquina está offline.", statusCode: 503);
+    var result = await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), id, request.Action),
+        false, cancellationToken);
+    logger.LogInformation("Action {Action} for machine {MachineId} requested by {UserId}: {Succeeded}",
+        request.Action, id, GetUserId(principal), result.Succeeded);
+    return result.Succeeded ? Results.Ok(result) : Results.Problem(result.Message, statusCode: 503);
+});
+
+var gateway = app.MapGroup("/api/gateway");
+gateway.MapGet("/poll", async (HttpRequest request, WorkerKeys keys,
+    RemoteJobBroker jobs, CancellationToken cancellationToken) =>
+{
+    if (!keys.IsGateway(request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
+    var job = await jobs.PollAsync(true, Guid.Empty, cancellationToken);
+    return job is null ? Results.NoContent() : Results.Ok(job);
+});
+gateway.MapPost("/jobs/{id:guid}/complete", (Guid id, RemoteJobResult result,
+    Guid machineId, HttpRequest request, WorkerKeys keys, RemoteJobBroker jobs) =>
+{
+    if (!keys.IsGateway(request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
+    return jobs.Complete(id, machineId, true, result) ? Results.NoContent() : Results.NotFound();
+});
+
+var agent = app.MapGroup("/api/agent/{machineId:guid}");
+agent.MapGet("/poll", async (Guid machineId, HttpRequest request, WorkerKeys keys,
+    AppDbContext database, RemoteJobBroker jobs, CancellationToken cancellationToken) =>
+{
+    if (!keys.IsAgent(machineId, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
+    if (!await database.Machines.AnyAsync(machine => machine.Id == machineId, cancellationToken))
+        return Results.NotFound();
+    var job = await jobs.PollAsync(false, machineId, cancellationToken);
+    return job is null ? Results.NoContent() : Results.Ok(job);
+});
+agent.MapPost("/jobs/{id:guid}/complete", async (Guid machineId, Guid id,
+    RemoteJobResult result, HttpRequest request, WorkerKeys keys, AppDbContext database,
+    RemoteJobBroker jobs, CancellationToken cancellationToken) =>
+{
+    if (!keys.IsAgent(machineId, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
+    if (!await database.Machines.AnyAsync(machine => machine.Id == machineId, cancellationToken))
+        return Results.NotFound();
+    return jobs.Complete(id, machineId, false, result) ? Results.NoContent() : Results.NotFound();
 });
 
 app.Run();
@@ -296,7 +382,7 @@ static bool ValidateMachine(MachineRequest request, out string normalizedMac, ou
     return true;
 }
 
-static MachineResponse ToResponse(Machine machine) => new(
+static MachineResponse ToResponse(Machine machine, bool agentOnline, bool gatewayOnline) => new(
     machine.Id,
     machine.Name,
     machine.MacAddress,
@@ -305,6 +391,8 @@ static MachineResponse ToResponse(Machine machine) => new(
     machine.WolPort,
     machine.WakeMethod,
     machine.LastWakeRequestedAt,
-    machine.CreatedAt);
+    machine.CreatedAt,
+    agentOnline,
+    gatewayOnline);
 
 public partial class Program;

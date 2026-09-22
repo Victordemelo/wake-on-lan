@@ -1,6 +1,6 @@
 # Agent
 
-Serviço planejado para Windows e Linux. Ele informará o estado da máquina e executará ações explicitamente autorizadas, como desligar, reiniciar, suspender e rodar tarefas locais cadastradas.
+Serviço para Windows e Linux que informa presença e executa apenas desligamento e reinicialização nesta versão.
 
-Shell remoto arbitrário ficará desabilitado por padrão. A implementação será separada do gateway porque o agente não consegue acordar a própria máquina enquanto ela está desligada.
+O agente usa `src/worker` em modo `agent`. Ele recebe somente `shutdown` e `restart`, usando uma chave vinculada ao ID da máquina. O PC deve estar ligado e conectado à API. Consulte [o guia de instalação](../../docs/REMOTE_SETUP.md). Shell remoto arbitrário não é aceito.
 

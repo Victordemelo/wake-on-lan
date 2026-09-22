@@ -2,10 +2,10 @@ import { FormEvent, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Server, Settings,
-  ShieldCheck, Trash2, Wifi, X,
+  ShieldCheck, Trash2, Wifi, X, RotateCcw, KeyRound,
 } from 'lucide-react'
 import { api, AuthResponse, Machine, MachineInput, session, WakeMethod } from './api'
-import ScrollExpansionHero from './components/ui/scroll-expansion-hero'
+import ProjectShowcase from './components/ui/ProjectShowcase'
 
 const emptyMachine: MachineInput = {
   name: '', macAddress: '', hostname: '', broadcastAddress: '255.255.255.255',
@@ -27,21 +27,27 @@ function App() {
   const [showForm, setShowForm] = useState(false)
   const [message, setMessage] = useState('')
   const [loadingMachines, setLoadingMachines] = useState(true)
+  const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
 
-  const loadMachines = async () => {
-    setLoadingMachines(true)
+  const loadMachines = async (quiet = false) => {
+    if (!quiet) setLoadingMachines(true)
     try {
       setMachines(await api.machines())
     } catch {
-      session.clear()
-      setAuthenticated(false)
+      if (!quiet) {
+        session.clear()
+        setAuthenticated(false)
+      }
     } finally {
-      setLoadingMachines(false)
+      if (!quiet) setLoadingMachines(false)
     }
   }
 
   useEffect(() => {
-    if (authenticated) void loadMachines()
+    if (!authenticated) return
+    void loadMachines()
+    const timer = window.setInterval(() => void loadMachines(true), 15000)
+    return () => window.clearInterval(timer)
   }, [authenticated])
 
   if (!authenticated) {
@@ -67,6 +73,27 @@ function App() {
     setAuthenticated(false)
   }
 
+  const powerAction = async (machine: Machine, action: 'shutdown' | 'restart') => {
+    const label = action === 'shutdown' ? 'desligar' : 'reiniciar'
+    if (!confirm(`Deseja ${label} ${machine.name}? Salve o trabalho aberto nessa máquina antes de continuar.`)) return
+    try {
+      const result = await api.action(machine.id, action)
+      setMessage(result.message)
+      await loadMachines()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `Não foi possível ${label} a máquina.`)
+    }
+  }
+
+  const openAgentSetup = async (machine: Machine) => {
+    try {
+      const result = await api.agentKey(machine.id)
+      setAgentSetup({ machine, key: result.key })
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Não foi possível gerar a chave do agente.')
+    }
+  }
+
   return (
     <div className="app-frame">
       <aside className="sidebar">
@@ -74,7 +101,7 @@ function App() {
         <nav className="side-nav" aria-label="Navegação principal">
           <a className="nav-item active" href="#machines"><LayoutDashboard size={18} /> Visão geral</a>
           <a className="nav-item" href="#machines"><Monitor size={18} /> Máquinas <span>{machines.length}</span></a>
-          <button className="nav-item" disabled><Radio size={18} /> Gateways <small>Em breve</small></button>
+          <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Radio size={18} /> Gateway <small>Guia</small></a>
           <button className="nav-item" disabled><ScrollText size={18} /> Atividades</button>
         </nav>
         <div className="sidebar-bottom">
@@ -107,7 +134,7 @@ function App() {
             </article>
             <article className="stat-card">
               <span className="stat-icon cyan"><Network size={21} /></span>
-              <div><small>CONEXÃO</small><strong>Local</strong><p>Gateway remoto no roadmap</p></div>
+              <div><small>GATEWAY</small><strong>{machines.some((machine) => machine.gatewayOnline) ? 'Online' : 'Pendente'}</strong><p>Disponível após configurar o serviço na residência</p></div>
             </article>
             <article className="stat-card">
               <span className="stat-icon violet"><ShieldCheck size={21} /></span>
@@ -129,7 +156,7 @@ function App() {
           ) : (
             <section className="machine-grid">
               {machines.map((machine) => (
-                <MachineCard key={machine.id} machine={machine} onWake={() => void wake(machine)} onRemove={async () => {
+                <MachineCard key={machine.id} machine={machine} onWake={() => void wake(machine)} onAction={(action) => void powerAction(machine, action)} onAgentSetup={() => void openAgentSetup(machine)} onRemove={async () => {
                   if (confirm(`Remover ${machine.name}?`)) {
                     await api.removeMachine(machine.id)
                     await loadMachines()
@@ -147,16 +174,23 @@ function App() {
         setMessage('Máquina cadastrada com sucesso.')
         await loadMachines()
       }} />}
+      {agentSetup && <div className="dialog-backdrop" onMouseDown={() => setAgentSetup(null)}>
+        <div className="dialog agent-setup" role="dialog" aria-modal="true" aria-label="Configurar agente" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="dialog-title"><div><span className="dialog-icon"><KeyRound size={20} /></span><div><h2>Agente de {agentSetup.machine.name}</h2><p>Guarde esta chave somente no computador controlado.</p></div></div><button className="icon-button" onClick={() => setAgentSetup(null)} aria-label="Fechar"><X size={20} /></button></div>
+          <div className="dialog-body"><p>ID da máquina</p><code>{agentSetup.machine.id}</code><p>Chave do agente</p><code className="secret-key">{agentSetup.key}</code><p>Configure <code>REMOTE_WAKE_MACHINE_ID</code> e <code>REMOTE_WAKE_KEY</code> no serviço local. Veja o <a href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer">guia de instalação</a>.</p></div>
+          <div className="dialog-actions"><button className="button secondary" onClick={() => setAgentSetup(null)}>Fechar</button></div>
+        </div>
+      </div>}
     </div>
   )
 }
 
-function MachineCard({ machine, onWake, onRemove }: { machine: Machine; onWake: () => void; onRemove: () => void }) {
+function MachineCard({ machine, onWake, onAction, onAgentSetup, onRemove }: { machine: Machine; onWake: () => void; onAction: (action: 'shutdown' | 'restart') => void; onAgentSetup: () => void; onRemove: () => void }) {
   return (
     <article className="machine-card">
       <div className="machine-top">
         <span className="device-icon"><Monitor size={23} /></span>
-        <span className="configured"><span /> Configurada</span>
+        <span className="configured"><span /> {machine.agentOnline ? 'Agente online' : 'Agente offline'}</span>
       </div>
       <h3>{machine.name}</h3>
       <p className="machine-host">{machine.hostname || 'Computador sem hostname'}</p>
@@ -164,11 +198,17 @@ function MachineCard({ machine, onWake, onRemove }: { machine: Machine; onWake: 
         <div><dt>Endereço MAC</dt><dd>{formatMac(machine.macAddress)}</dd></div>
         <div><dt>Destino</dt><dd>{machine.broadcastAddress}:{machine.wolPort}</dd></div>
         <div><dt>Método</dt><dd>{methodLabel(machine.wakeMethod)}</dd></div>
+        {machine.wakeMethod === 'TailscaleGateway' && <div><dt>Gateway</dt><dd>{machine.gatewayOnline ? 'Online' : 'Offline'}</dd></div>}
       </dl>
       {machine.lastWakeRequestedAt && <p className="last-action"><Activity size={14} /> Último envio {formatDate(machine.lastWakeRequestedAt)}</p>}
       <div className="card-actions">
         <button className="button power-button" onClick={onWake}><Power size={18} /> Ligar máquina</button>
         <button className="icon-button danger" onClick={onRemove} aria-label={`Remover ${machine.name}`}><Trash2 size={18} /></button>
+      </div>
+      <div className="card-actions secondary-actions">
+        <button className="button secondary" onClick={() => onAction('shutdown')} disabled={!machine.agentOnline}><Power size={15} /> Desligar</button>
+        <button className="button secondary" onClick={() => onAction('restart')} disabled={!machine.agentOnline}><RotateCcw size={15} /> Reiniciar</button>
+        <button className="icon-button" onClick={onAgentSetup} aria-label={`Configurar agente de ${machine.name}`}><KeyRound size={16} /></button>
       </div>
     </article>
   )
@@ -228,7 +268,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse)
         <nav><a href="#project">O projeto</a><a className="button primary" href="#access">Entrar</a></nav>
       </header>
 
-      <ScrollExpansionHero><ProjectCallToAction /></ScrollExpansionHero>
+      <ProjectShowcase><ProjectCallToAction /></ProjectShowcase>
 
       <section className="landing-access" id="access">
         <div className="access-background"><i /><i /><i /></div>
@@ -292,7 +332,7 @@ function MachineDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
             <select value={machine.wakeMethod} onChange={(e) => update('wakeMethod', e.target.value as WakeMethod)}>
               <option value="LocalBroadcast">Rede local ou VPN</option>
               <option value="WakeOnWan">Wake-on-WAN</option>
-              <option value="TailscaleGateway" disabled>Gateway Tailscale (em breve)</option>
+              <option value="TailscaleGateway">Gateway residencial / Tailscale</option>
             </select>
           </label>
           <div className="form-row">

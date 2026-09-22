@@ -12,15 +12,15 @@ PWA responsável por autenticação, cadastro de máquinas e envio de ações. C
 
 ### API
 
-Plano de controle. Armazena usuários, máquinas, configuração de ativação e auditoria. No MVP, também consegue enviar Magic Packets diretamente. Futuramente encaminhará pedidos ao gateway apropriado.
+Plano de controle. Armazena usuários, máquinas, configuração de ativação e tentativas de wake. Envia Magic Packets diretamente nos modos local e Wake-on-WAN ou despacha o pedido ao gateway residencial.
 
 ### Gateway
 
-Processo leve dentro da rede residencial. Mantém uma conexão autenticada de saída com a API, recebe pedidos autorizados e envia o broadcast UDP na LAN. Poderá ser executado em Docker, Linux, Windows, NAS ou nó Tailscale.
+Processo leve dentro da rede residencial. Faz long polling autenticado de saída para a API, recebe pedidos autorizados e envia o broadcast UDP na LAN. A primeira versão usa uma chave manual e permite apenas destinos explicitamente configurados.
 
 ### Agent
 
-Serviço instalado na máquina controlada. Quando o sistema está ligado, informa presença e executa ações previamente permitidas, como desligar, reiniciar, suspender ou reiniciar um serviço.
+Serviço instalado na máquina controlada. Quando o sistema está ligado, faz long polling autenticado de saída e executa somente desligamento ou reinicialização.
 
 ## Fluxos
 
@@ -30,17 +30,17 @@ Serviço instalado na máquina controlada. Quando o sistema está ligado, inform
 Usuário → PWA → POST /machines/{id}/wake → API → UDP → destino configurado
 ```
 
-### Wake via gateway planejado
+### Wake via gateway
 
 ```text
 Usuário → PWA → API → canal autenticado → Gateway → UDP broadcast → NIC
 ```
 
-### Comando em máquina ligada planejado
+### Comando em máquina ligada
 
 ```text
-Usuário → PWA → API → canal autenticado → Agent → ação permitida
-                                      └──── resultado/auditoria ────┘
+Usuário → PWA → API → long polling autenticado → Agent → ação permitida
+                                      └──── resultado + log ────┘
 ```
 
 ## Decisões iniciais

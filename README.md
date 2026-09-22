@@ -1,8 +1,8 @@
 # Remote Wake
 
-Plataforma open source e self-hosted para ligar e, futuramente, administrar computadores remotamente. O projeto combina Wake-on-LAN, uma PWA instalável, uma API autenticada e componentes locais para funcionar dentro e fora de casa.
+Plataforma open source e self-hosted para ligar, desligar e reiniciar computadores remotamente. O projeto combina Wake-on-LAN, uma PWA instalável, uma API autenticada e componentes locais para funcionar dentro e fora de casa.
 
-> O projeto está em desenvolvimento inicial. O MVP atual permite criar uma conta, cadastrar máquinas e enviar um Magic Packet. Desligamento, reinicialização, gateway Tailscale e agente do sistema estão no roadmap.
+> O projeto está em desenvolvimento inicial. O gateway e o agente já têm uma primeira implementação, mas exigem configuração local e ainda precisam ser testados na rede e nos computadores reais. Consulte [o guia remoto](docs/REMOTE_SETUP.md).
 
 ## Por que este projeto existe?
 
@@ -28,7 +28,7 @@ Remote Wake API
       │
       ├── UDP direto ───────────────► roteador/rede local ─► PC desligado
       │
-      └── gateway futuro ───────────► LAN/Tailscale ───────► PC desligado
+      └── gateway residencial ─────► LAN/Tailscale ───────► PC desligado
 
 Quando o PC estiver ligado:
 
@@ -43,9 +43,9 @@ Wake-on-LAN liga ou desperta a máquina. Desligar, reiniciar ou executar ações
 |---|---|---|
 | Rede local/VPN | Envia o pacote ao broadcast da LAN | API/gateway dentro da LAN ou VPN que encaminhe o pacote |
 | Wake-on-WAN | Envia UDP para um IP público ou DDNS | IP público, redirecionamento de porta e IP/MAC binding |
-| Gateway Tailscale | Um nó Tailscale ligado envia o pacote dentro da LAN | Gateway sempre ligado na residência; implementação no roadmap |
+| Gateway residencial | Um processo ligado na residência envia o pacote dentro da LAN | Gateway sempre ligado e API acessível por HTTPS ou Tailscale |
 
-O Tailscale instalado somente no computador desligado não consegue acordá-lo. É necessário outro nó ativo na residência, como roteador compatível, NAS, Raspberry Pi ou mini PC.
+O Tailscale instalado somente no computador desligado não consegue acordá-lo. A API e o gateway devem permanecer ligados em outro equipamento, como NAS, Raspberry Pi ou mini PC. O EX511 sozinho só substitui o gateway se seu firmware oferecer a função necessária. Veja [como configurar gateway e agente](docs/REMOTE_SETUP.md).
 
 ## Tecnologias
 
@@ -107,6 +107,7 @@ Acesse:
 - OpenAPI em desenvolvimento: <http://localhost:8080/openapi/v1.json>
 
 Na primeira execução, o PostgreSQL e as tabelas são criados automaticamente.
+O primeiro usuário pode se cadastrar. Depois disso, novos cadastros ficam fechados por padrão. Para permitir mais usuários, defina `ALLOW_REGISTRATION=true` temporariamente no `.env` e reinicie a API.
 
 Para executar em segundo plano:
 
@@ -139,7 +140,7 @@ Antes do teste, habilite Wake-on-LAN na BIOS/UEFI e nas propriedades da placa de
 
 ### Observação importante sobre Docker
 
-Broadcast UDP saindo de um contêiner pode não alcançar a rede física no Docker Desktop. No Linux, uma opção futura será executar o gateway com rede do host. No Windows/macOS e no modo Tailscale, o componente `gateway` será a forma recomendada de transmitir o Magic Packet pela LAN. O envio direto disponível no MVP é útil para Wake-on-WAN e ambientes onde o contêiner alcança o destino configurado.
+Broadcast UDP saindo de um contêiner pode não alcançar a rede física no Docker Desktop. No Linux, o perfil `gateway-linux` usa a rede do host. No Windows/macOS, execute o worker do gateway diretamente no host ou em outro dispositivo sempre ligado na LAN. Veja [o guia remoto](docs/REMOTE_SETUP.md).
 
 ## Desenvolvimento sem Docker
 
@@ -172,8 +173,9 @@ O Vite encaminha `/api` para `http://localhost:8080` durante o desenvolvimento.
 ├── src/
 │   ├── api/        # API, autenticação, persistência e Magic Packet
 │   ├── web/        # PWA em React e TypeScript
-│   ├── gateway/    # transmissor dentro da LAN (roadmap)
-│   └── agent/      # serviço Windows/Linux (roadmap)
+│   ├── gateway/    # orientação do gateway residencial
+│   ├── agent/      # orientação do agente Windows/Linux
+│   └── worker/     # executável compartilhado dos dois modos
 ├── docs/           # arquitetura, segurança e guias
 ├── compose.yaml
 ├── .env.example
@@ -191,6 +193,8 @@ O Vite encaminha `/api` para `http://localhost:8080` durante o desenvolvimento.
 | `PUT` | `/api/machines/{id}` | Sim | Atualiza uma máquina |
 | `DELETE` | `/api/machines/{id}` | Sim | Remove uma máquina |
 | `POST` | `/api/machines/{id}/wake` | Sim | Envia o Magic Packet |
+| `POST` | `/api/machines/{id}/agent-key` | Sim | Obtém a chave do agente da própria máquina |
+| `POST` | `/api/machines/{id}/actions` | Sim | Pede desligamento ou reinicialização ao agente |
 | `GET` | `/health` | Não | Verifica API e banco |
 
 ## Segurança
@@ -202,7 +206,7 @@ O Remote Wake controla máquinas e deve ser tratado como software sensível.
 - Troque todas as senhas e a chave JWT do `.env`.
 - Restrinja cadastro público antes de hospedar para terceiros.
 - Não use uma conta administrativa do sistema para tarefas desnecessárias.
-- O futuro agente aceitará ações cadastradas, e não shell arbitrário por padrão.
+- O agente aceita somente as ações `shutdown` e `restart`; shell arbitrário não é permitido.
 - Magic Packets não possuem autenticação; a segurança deve estar no acesso ao sistema e à rede.
 
 Tokens são mantidos em `localStorage` no MVP. Antes de uma versão de produção pública, a autenticação será migrada para cookies `HttpOnly`, com refresh token, proteção CSRF, limitação de tentativas e confirmação de e-mail. Consulte [SECURITY.md](SECURITY.md).
@@ -216,11 +220,11 @@ Tokens são mantidos em `localStorage` no MVP. Antes de uma versão de produçã
 - [x] Histórico interno das tentativas de wake
 - [ ] Testes automatizados da API e do pacote WOL
 - [ ] Edição de máquinas pela PWA
-- [ ] Gateway autenticado para LAN/Tailscale
-- [ ] Agente Windows executado como Windows Service
-- [ ] Agente Linux executado via systemd
-- [ ] Status online/offline em tempo real
-- [ ] Desligar, reiniciar, suspender e hibernar
+- [x] Gateway com conexão de saída autenticada para LAN/Tailscale (chave manual)
+- [x] Worker compatível com Windows Service e systemd (instalação manual)
+- [x] Status online/offline por contato recente
+- [x] Desligar e reiniciar com confirmação
+- [ ] Suspender e hibernar
 - [ ] Ações e scripts locais previamente autorizados
 - [ ] Cookies seguros, refresh tokens, 2FA e recuperação de conta
 - [ ] Auditoria visível no painel

@@ -11,8 +11,10 @@ export type Machine = {
   wakeMethod: WakeMethod
   lastWakeRequestedAt?: string
   createdAt: string
+  agentOnline: boolean
+  gatewayOnline: boolean
 }
-export type MachineInput = Omit<Machine, 'id' | 'createdAt' | 'lastWakeRequestedAt'>
+export type MachineInput = Omit<Machine, 'id' | 'createdAt' | 'lastWakeRequestedAt' | 'agentOnline' | 'gatewayOnline'>
 
 const tokenKey = 'remote-wake-token'
 
@@ -35,7 +37,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const problem = await response.json().catch(() => null)
-    throw new Error(problem?.message ?? (response.status === 401
+    throw new Error(problem?.message ?? problem?.detail ?? (response.status === 401
       ? 'E-mail ou senha incorretos.'
       : 'Não foi possível concluir a operação.'))
   }
@@ -57,5 +59,9 @@ export const api = {
   }),
   removeMachine: (id: string) => request<void>(`/api/machines/${id}`, { method: 'DELETE' }),
   wake: (id: string) => request<{ message: string }>(`/api/machines/${id}/wake`, { method: 'POST' }),
+  action: (id: string, action: 'shutdown' | 'restart') => request<{ message: string }>(`/api/machines/${id}/actions`, {
+    method: 'POST', body: JSON.stringify({ action }),
+  }),
+  agentKey: (id: string) => request<{ machineId: string; key: string }>(`/api/machines/${id}/agent-key`, { method: 'POST' }),
 }
 
