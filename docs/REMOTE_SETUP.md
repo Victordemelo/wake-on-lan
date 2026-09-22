@@ -20,7 +20,7 @@ Exemplo para gerar uma chave no PowerShell:
 [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))
 ```
 
-O gateway só atende máquinas desse proprietário. Uma instalação suporta um gateway residencial nesta versão. A chave do agente é diferente para cada máquina e pode ser exibida apenas pela conta proprietária no painel. Alterar `AGENT_MASTER_KEY` invalida todas as chaves dos agentes; apagar uma máquina invalida a chave dela.
+O gateway só atende máquinas desse proprietário. Uma instalação suporta um gateway residencial nesta versão. A chave do agente é diferente para cada máquina e pode ser exibida ou revogada apenas pela conta proprietária no painel. Alterar `AGENT_MASTER_KEY` invalida todas as chaves dos agentes; apagar uma máquina invalida a chave dela.
 
 Antes de usar pela internet, coloque a API atrás de HTTPS ou disponibilize a API somente na sua tailnet. O Compose fornecido é para desenvolvimento local e liga as portas `8005` e `8080` apenas a `127.0.0.1`; configure um proxy seguro para acesso externo.
 
@@ -98,8 +98,11 @@ O painel libera **Desligar** e **Reiniciar** quando o agente aparece online. Há
 
 ## Limites desta versão
 
+Para execução automática, siga o [guia de instalação como serviço](SERVICE_INSTALL.md), com script Windows e unidade systemd. A instalação real precisa ser validada no equipamento de destino.
+
 - Os pedidos em andamento ficam na memória da API. Um reinício da API cancela esses pedidos; não há fila persistente.
 - O resultado de Ligar confirma o envio do pacote, não que o PC efetivamente iniciou. Teste BIOS/UEFI, placa Ethernet e energia em suspensão/desligamento.
 - O status online considera o contato do worker nos últimos 35 segundos, não uma inspeção direta do sistema operacional.
-- Ações de energia são registradas no log da API, mas o histórico completo ainda não aparece no painel.
-- O pareamento do gateway usa chave configurada manualmente. Códigos temporários, múltiplos gateways e rotação individual de chaves ficam para a próxima fase.
+- O painel mostra as últimas 100 tentativas de wake, desligamento e reinício. Confirmação significa envio/agendamento aceito, não inspeção do estado físico. Remover uma máquina também remove seu histórico.
+- O pareamento do gateway usa chave configurada manualmente. Códigos temporários e múltiplos gateways ficam para a próxima fase. A chave de cada agente já pode ser revogada no painel.
+- Comandos expiram em 20 segundos e não são reexecutados automaticamente. Se faltar confirmação, confira o estado do PC antes de repetir.

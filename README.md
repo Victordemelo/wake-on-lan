@@ -194,8 +194,16 @@ O Vite encaminha `/api` para `http://localhost:8080` durante o desenvolvimento.
 | `DELETE` | `/api/machines/{id}` | Sim | Remove uma máquina |
 | `POST` | `/api/machines/{id}/wake` | Sim | Envia o Magic Packet |
 | `POST` | `/api/machines/{id}/agent-key` | Sim | Obtém a chave do agente da própria máquina |
+| `DELETE` | `/api/machines/{id}/agent-key` | Sim | Revoga a chave atual do agente |
+| `GET` | `/api/activity` | Sim | Últimas 100 tentativas do proprietário |
 | `POST` | `/api/machines/{id}/actions` | Sim | Pede desligamento ou reinicialização ao agente |
-| `GET` | `/health` | Não | Verifica API e banco |
+| `GET` | `/health` | Não | Verifica se a API responde (não verifica o banco) |
+
+## Serviços e testes
+
+Veja [instalação Windows/systemd](docs/SERVICE_INSTALL.md). O painel permite editar máquinas, consultar tentativas e revogar a chave de um agente.
+
+Com Docker em execução, rode `./scripts/Test-Integration.ps1` no PowerShell. A suíte cria banco, API, gateway e agente descartáveis; testa isolamento entre usuários, edição, histórico, revogação e upgrade do esquema. O gateway envia apenas para loopback, e o agente simula desligamento/reinício. Nenhum PC é desligado. Os recursos de teste são removidos ao final.
 
 ## Segurança
 

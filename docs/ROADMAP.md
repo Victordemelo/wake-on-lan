@@ -16,7 +16,7 @@
 - [x] retransmissão de broadcast na LAN com destinos permitidos;
 - [x] instruções para Tailscale e Docker Linux;
 - [ ] pareamento por código e múltiplos gateways;
-- [ ] rotação e revogação individual de chaves;
+- [x] revogação individual de chaves dos agentes (gateway ainda usa chave manual única);
 - [ ] teste real na rede residencial.
 
 ## Fase 3 — Agente Windows/Linux
@@ -25,16 +25,17 @@
 - [x] presença online/offline por contato recente;
 - [x] desligar e reiniciar com confirmação e timeout;
 - [x] worker compatível com Windows Service e systemd;
-- [ ] instaladores e teste real em Windows/Linux;
+- [x] script de instalação Windows e configuração systemd documentada;
+- [ ] teste real dos serviços em Windows/Linux;
 - [ ] suspender, hibernar e ações locais cadastradas;
-- [ ] auditoria persistente e visível no painel.
+- [x] histórico persistente de comandos visível no painel (removido junto com a máquina).
 
 ## Fase 4 — Produção
 
 - cookies HttpOnly e refresh tokens rotativos;
 - 2FA e recuperação de conta;
-- migrações versionadas do banco;
-- rate limiting e proteção contra abuso;
+- evolução completa de migrações (upgrade aditivo v1 implementado);
+- ampliar rate limiting (autenticação limitada a 20 requisições/minuto por IP; atrás do proxy o limite é compartilhado);
 - observabilidade;
 - releases assinadas;
 - atualização segura de agentes;
