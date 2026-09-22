@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,13 @@ builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<MagicPacketService>();
 builder.Services.AddSingleton<RemoteJobBroker>();
 builder.Services.AddSingleton<WorkerKeys>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = 429;
+    options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
@@ -58,11 +66,13 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await database.Database.EnsureCreatedAsync();
+    await SchemaUpgrades.ApplyAsync(database);
 }
 
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 if (app.Environment.IsDevelopment())
 {
@@ -71,7 +81,9 @@ if (app.Environment.IsDevelopment())
 
 app.MapHealthChecks("/health");
 
-var auth = app.MapGroup("/api/auth");
+var auth = app.MapGroup("/api/auth").RequireRateLimiting("auth");
+auth.MapGet("/registration", async (AppDbContext database, IConfiguration configuration) =>
+    Results.Ok(new { open = configuration.GetValue<bool>("Registration:Open") || !await database.Users.AnyAsync() }));
 var registrationGate = new SemaphoreSlim(1, 1);
 
 auth.MapPost("/register", async (
@@ -81,10 +93,10 @@ auth.MapPost("/register", async (
     TokenService tokens,
     IConfiguration configuration) =>
 {
-    var name = request.Name.Trim();
-    var email = request.Email.Trim().ToLowerInvariant();
+    var name = request.Name?.Trim() ?? "";
+    var email = request.Email?.Trim().ToLowerInvariant() ?? "";
 
-    if (name.Length < 2 || !email.Contains('@') || request.Password.Length < 8)
+    if (name.Length is < 2 or > 100 || email.Length > 254 || !email.Contains('@') || request.Password is null || request.Password.Length is < 8 or > 256)
     {
         return Results.ValidationProblem(new Dictionary<string, string[]>
         {
@@ -122,6 +134,7 @@ auth.MapPost("/login", async (
     IPasswordHasher<User> passwordHasher,
     TokenService tokens) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrEmpty(request.Password)) return Results.Unauthorized();
     var email = request.Email.Trim().ToLowerInvariant();
     var user = await database.Users.SingleOrDefaultAsync(item => item.Email == email);
 
@@ -137,6 +150,15 @@ auth.MapPost("/login", async (
 });
 
 var machines = app.MapGroup("/api/machines").RequireAuthorization();
+app.MapGet("/api/activity", async (ClaimsPrincipal principal, AppDbContext database) =>
+{
+    var owner = GetUserId(principal);
+    return Results.Ok(await database.WakeAttempts.AsNoTracking()
+        .Where(item => item.Machine!.OwnerId == owner)
+        .OrderByDescending(item => item.RequestedAt).Take(100)
+        .Select(item => new { item.Id, item.MachineId, machineName = item.Machine!.Name,
+            item.Action, item.Succeeded, item.Message, item.RequestedAt }).ToListAsync());
+}).RequireAuthorization();
 
 machines.MapGet("/", async (ClaimsPrincipal principal, AppDbContext database,
     RemoteJobBroker jobs, WorkerKeys keys) =>
@@ -270,7 +292,7 @@ machines.MapPost("/{id:guid}/wake", async (
         Message = message,
         RequestedAt = requestedAt
     });
-    await database.SaveChangesAsync(cancellationToken);
+    await database.SaveChangesAsync(CancellationToken.None);
     return success
         ? Results.Ok(new WakeResponse(true, message, requestedAt))
         : Results.BadRequest(new WakeResponse(false, message, requestedAt));
@@ -279,10 +301,22 @@ machines.MapPost("/{id:guid}/wake", async (
 machines.MapPost("/{id:guid}/agent-key", async (Guid id, ClaimsPrincipal principal,
     AppDbContext database, WorkerKeys keys) =>
 {
-    if (await FindOwnedMachine(id, principal, database) is null) return Results.NotFound();
-    var key = keys.AgentKey(id);
+    var machine = await FindOwnedMachine(id, principal, database);
+    if (machine is null) return Results.NotFound();
+    var key = keys.AgentKey(id, machine.AgentKeyVersion);
     return key is null ? Results.Problem("Configure Agent:MasterKey na API.", statusCode: 503)
         : Results.Ok(new { machineId = id, key });
+});
+
+machines.MapDelete("/{id:guid}/agent-key", async (Guid id, ClaimsPrincipal principal,
+    AppDbContext database, RemoteJobBroker jobs) =>
+{
+    var machine = await FindOwnedMachine(id, principal, database);
+    if (machine is null) return Results.NotFound();
+    machine.AgentKeyVersion++;
+    await database.SaveChangesAsync();
+    jobs.ForgetAgent(id);
+    return Results.NoContent();
 });
 
 machines.MapPost("/{id:guid}/actions", async (Guid id, ActionRequest request,
@@ -292,10 +326,12 @@ machines.MapPost("/{id:guid}/actions", async (Guid id, ActionRequest request,
     if (await FindOwnedMachine(id, principal, database) is null) return Results.NotFound();
     if (request.Action is not ("shutdown" or "restart"))
         return Results.BadRequest(new { message = "Ação não permitida." });
-    if (!jobs.AgentOnline(id))
-        return Results.Problem("O agente da máquina está offline.", statusCode: 503);
-    var result = await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), id, request.Action),
-        false, cancellationToken);
+    var result = !jobs.AgentOnline(id)
+        ? new RemoteJobResult(false, "O agente da máquina está offline.")
+        : await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), id, request.Action), false, cancellationToken);
+    database.WakeAttempts.Add(new WakeAttempt { MachineId = id, Action = request.Action,
+        Succeeded = result.Succeeded, Message = result.Message });
+    await database.SaveChangesAsync(CancellationToken.None);
     logger.LogInformation("Action {Action} for machine {MachineId} requested by {UserId}: {Succeeded}",
         request.Action, id, GetUserId(principal), result.Succeeded);
     return result.Succeeded ? Results.Ok(result) : Results.Problem(result.Message, statusCode: 503);
@@ -320,19 +356,20 @@ var agent = app.MapGroup("/api/agent/{machineId:guid}");
 agent.MapGet("/poll", async (Guid machineId, HttpRequest request, WorkerKeys keys,
     AppDbContext database, RemoteJobBroker jobs, CancellationToken cancellationToken) =>
 {
-    if (!keys.IsAgent(machineId, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
-    if (!await database.Machines.AnyAsync(machine => machine.Id == machineId, cancellationToken))
-        return Results.NotFound();
+    var machine = await database.Machines.AsNoTracking().SingleOrDefaultAsync(item => item.Id == machineId, cancellationToken);
+    if (machine is null || !keys.IsAgent(machineId, machine.AgentKeyVersion, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
     var job = await jobs.PollAsync(false, machineId, cancellationToken);
+    var version = await database.Machines.AsNoTracking().Where(item => item.Id == machineId)
+        .Select(item => (int?)item.AgentKeyVersion).SingleOrDefaultAsync(cancellationToken);
+    if (version != machine.AgentKeyVersion) return Results.Unauthorized();
     return job is null ? Results.NoContent() : Results.Ok(job);
 });
 agent.MapPost("/jobs/{id:guid}/complete", async (Guid machineId, Guid id,
     RemoteJobResult result, HttpRequest request, WorkerKeys keys, AppDbContext database,
     RemoteJobBroker jobs, CancellationToken cancellationToken) =>
 {
-    if (!keys.IsAgent(machineId, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
-    if (!await database.Machines.AnyAsync(machine => machine.Id == machineId, cancellationToken))
-        return Results.NotFound();
+    var machine = await database.Machines.AsNoTracking().SingleOrDefaultAsync(item => item.Id == machineId, cancellationToken);
+    if (machine is null || !keys.IsAgent(machineId, machine.AgentKeyVersion, request.Headers["X-Remote-Wake-Key"])) return Results.Unauthorized();
     return jobs.Complete(id, machineId, false, result) ? Results.NoContent() : Results.NotFound();
 });
 
@@ -353,14 +390,14 @@ static Task<Machine?> FindOwnedMachine(Guid id, ClaimsPrincipal principal, AppDb
 
 static bool ValidateMachine(MachineRequest request, out string normalizedMac, out string error)
 {
-    if (request.Name.Trim().Length < 2)
+    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length is < 2 or > 100)
     {
         normalizedMac = string.Empty;
         error = "Informe um nome com pelo menos 2 caracteres.";
         return false;
     }
 
-    if (!MagicPacketService.TryNormalizeMac(request.MacAddress, out normalizedMac))
+    if (!MagicPacketService.TryNormalizeMac(request.MacAddress ?? "", out normalizedMac))
     {
         error = "Informe um endereço MAC válido.";
         return false;
@@ -372,7 +409,7 @@ static bool ValidateMachine(MachineRequest request, out string normalizedMac, ou
         return false;
     }
 
-    if (string.IsNullOrWhiteSpace(request.BroadcastAddress))
+    if (!Enum.IsDefined(request.WakeMethod) || string.IsNullOrWhiteSpace(request.BroadcastAddress) || request.BroadcastAddress.Length > 253)
     {
         error = "Informe o endereço de broadcast, IP público ou DDNS.";
         return false;

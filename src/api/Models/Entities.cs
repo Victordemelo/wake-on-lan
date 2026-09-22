@@ -29,6 +29,7 @@ public sealed class Machine
     public DateTimeOffset? LastWakeRequestedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public Guid OwnerId { get; set; }
+    public int AgentKeyVersion { get; set; }
     public User? Owner { get; set; }
     public ICollection<WakeAttempt> WakeAttempts { get; set; } = [];
 }
@@ -39,6 +40,7 @@ public sealed class WakeAttempt
     public Guid MachineId { get; set; }
     public Machine? Machine { get; set; }
     public bool Succeeded { get; set; }
+    public string Action { get; set; } = "wake";
     public required string Message { get; set; }
     public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
 }

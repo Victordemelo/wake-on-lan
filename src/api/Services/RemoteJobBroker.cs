@@ -4,7 +4,10 @@ using System.Threading.Channels;
 namespace RemoteWake.Api.Services;
 
 public sealed record RemoteJob(Guid Id, Guid MachineId, string Action, string? MacAddress = null,
-    string? BroadcastAddress = null, int WolPort = 9);
+    string? BroadcastAddress = null, int WolPort = 9)
+{
+    public DateTimeOffset ExpiresAt { get; init; } = DateTimeOffset.UtcNow.AddSeconds(20);
+}
 public sealed record RemoteJobResult(bool Succeeded, string Message);
 
 // Jobs live only while the requesting HTTP call is active. A worker never receives
@@ -17,6 +20,7 @@ public sealed class RemoteJobBroker
     private readonly ConcurrentDictionary<Guid, Channel<Guid>> agentQueues = new();
     private readonly ConcurrentDictionary<Guid, Pending> pending = new();
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> agentSeen = new();
+    private readonly ConcurrentDictionary<string, byte> active = new();
     private long gatewaySeenTicks;
 
     public bool GatewayOnline => DateTimeOffset.UtcNow.UtcTicks - Interlocked.Read(ref gatewaySeenTicks)
@@ -26,6 +30,8 @@ public sealed class RemoteJobBroker
 
     public async Task<RemoteJobResult> DispatchAsync(RemoteJob job, bool gateway, CancellationToken cancellationToken)
     {
+        var activeKey = $"{gateway}:{job.MachineId}";
+        if (!active.TryAdd(activeKey, 0)) return new(false, "Já existe uma solicitação em andamento para esta máquina.");
         var completion = new TaskCompletionSource<RemoteJobResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[job.Id] = new Pending(job, gateway, completion);
         var queue = gateway ? gatewayQueue : agentQueues.GetOrAdd(job.MachineId, _ => Channel.CreateUnbounded<Guid>());
@@ -36,11 +42,16 @@ public sealed class RemoteJobBroker
         }
         catch (TimeoutException)
         {
-            return new RemoteJobResult(false, "O serviço local não respondeu em 25 segundos.");
+            return new RemoteJobResult(false, "Sem confirmação do serviço local. A ação pode ter sido recebida; verifique a máquina antes de repetir.");
+        }
+        catch (OperationCanceledException)
+        {
+            return new(false, "Solicitação interrompida; confirme o estado da máquina antes de repetir.");
         }
         finally
         {
             pending.TryRemove(job.Id, out _);
+            active.TryRemove(activeKey, out _);
         }
     }
 
@@ -57,7 +68,7 @@ public sealed class RemoteJobBroker
             while (true)
             {
                 var id = await queue.Reader.ReadAsync(timeout.Token);
-                if (pending.TryGetValue(id, out var current)) return current.Job;
+                if (pending.TryGetValue(id, out var current) && current.Job.ExpiresAt > DateTimeOffset.UtcNow) return current.Job;
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -72,5 +83,12 @@ public sealed class RemoteJobBroker
             && current.Job.MachineId == machineId
             && current.Gateway == gateway
             && current.Completion.TrySetResult(result);
+    }
+
+    public void ForgetAgent(Guid machineId)
+    {
+        agentSeen.TryRemove(machineId, out _);
+        foreach (var item in pending.Values.Where(item => !item.Gateway && item.Job.MachineId == machineId))
+            item.Completion.TrySetResult(new(false, "Chave do agente revogada."));
     }
 }

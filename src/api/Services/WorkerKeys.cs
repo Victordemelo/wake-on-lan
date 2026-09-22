@@ -12,16 +12,17 @@ public sealed class WorkerKeys(IConfiguration configuration)
     public bool IsGateway(string? supplied) => GatewayConfigured && Matches(
         configuration["Gateway:Key"]!, supplied);
 
-    public string? AgentKey(Guid machineId)
+    public string? AgentKey(Guid machineId, int version = 0)
     {
         var master = configuration["Agent:MasterKey"];
         if (string.IsNullOrWhiteSpace(master)) return null;
-        return Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(master), machineId.ToByteArray()));
+        var data = version == 0 ? machineId.ToByteArray() : Encoding.UTF8.GetBytes($"{machineId}:v{version}");
+        return Convert.ToHexString(HMACSHA256.HashData(Encoding.UTF8.GetBytes(master), data));
     }
 
-    public bool IsAgent(Guid machineId, string? supplied)
+    public bool IsAgent(Guid machineId, int version, string? supplied)
     {
-        var expected = AgentKey(machineId);
+        var expected = AgentKey(machineId, version);
         return expected is not null && Matches(expected, supplied);
     }
 
