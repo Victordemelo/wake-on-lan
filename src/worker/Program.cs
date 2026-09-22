@@ -6,37 +6,46 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddWindowsService(options => options.ServiceName = "Remote Wake Agent");
+if (builder.Configuration["settings"] is { Length: > 0 } settings)
+    builder.Configuration.AddJsonFile(Path.GetFullPath(settings), optional: false, reloadOnChange: false).AddEnvironmentVariables();
+builder.Services.AddWindowsService(options => options.ServiceName =
+    builder.Configuration["REMOTE_WAKE_MODE"]?.ToLowerInvariant() == "gateway" ? "RemoteWakeGateway" : "RemoteWakeAgent");
 builder.Services.AddSystemd();
 builder.Services.AddHostedService<RemoteWorker>();
 await builder.Build().RunAsync();
 
 public sealed record RemoteJob(Guid Id, Guid MachineId, string Action, string? MacAddress,
-    string? BroadcastAddress, int WolPort);
+    string? BroadcastAddress, int WolPort, DateTimeOffset ExpiresAt);
 public sealed record RemoteJobResult(bool Succeeded, string Message);
 
-public sealed class RemoteWorker(ILogger<RemoteWorker> logger) : BackgroundService
+public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration configuration, IHostApplicationLifetime lifetime) : BackgroundService
 {
     private readonly JsonSerializerOptions json = new(JsonSerializerDefaults.Web);
+    private readonly Dictionary<Guid, DateTimeOffset> completed = new();
+    private string? Setting(string name) => configuration[name];
+    private void Stop() { Environment.ExitCode = 1; lifetime.StopApplication(); }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var mode = Environment.GetEnvironmentVariable("REMOTE_WAKE_MODE")?.ToLowerInvariant();
-        var apiUrl = Environment.GetEnvironmentVariable("REMOTE_WAKE_API_URL");
-        var key = Environment.GetEnvironmentVariable("REMOTE_WAKE_KEY");
+        var mode = Setting("REMOTE_WAKE_MODE")?.ToLowerInvariant();
+        var apiUrl = Setting("REMOTE_WAKE_API_URL");
+        var key = Setting("REMOTE_WAKE_KEY");
         if (mode is not ("gateway" or "agent") || !Uri.TryCreate(apiUrl, UriKind.Absolute, out var uri)
             || uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(key))
         {
             logger.LogError("Configure REMOTE_WAKE_MODE, REMOTE_WAKE_API_URL and REMOTE_WAKE_KEY.");
+            Stop();
             return;
         }
 
         var machineId = Guid.Empty;
-        if (mode == "agent" && !Guid.TryParse(Environment.GetEnvironmentVariable("REMOTE_WAKE_MACHINE_ID"), out machineId))
+        if (mode == "agent" && !Guid.TryParse(Setting("REMOTE_WAKE_MACHINE_ID"), out machineId))
         {
             logger.LogError("Configure REMOTE_WAKE_MACHINE_ID for the agent.");
+            Stop();
             return;
         }
 
@@ -54,12 +63,22 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger) : BackgroundServi
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
                     logger.LogError("Worker key rejected. Check API and worker configuration.");
+                    Stop();
                     return;
                 }
                 response.EnsureSuccessStatusCode();
                 var job = await response.Content.ReadFromJsonAsync<RemoteJob>(json, stoppingToken);
                 if (job is null) continue;
-                var result = mode == "gateway" ? await WakeAsync(job, stoppingToken) : RunAction(job, machineId);
+                foreach (var expired in completed.Where(item => item.Value < DateTimeOffset.UtcNow).Select(item => item.Key).ToArray()) completed.Remove(expired);
+                RemoteJobResult result;
+                if (job.ExpiresAt <= DateTimeOffset.UtcNow || completed.ContainsKey(job.Id))
+                    result = new(false, "Comando expirado ou já processado.");
+                else
+                {
+                    completed[job.Id] = job.ExpiresAt;
+                    try { result = mode == "gateway" ? await WakeAsync(job, stoppingToken) : RunAction(job, machineId); }
+                    catch (SocketException) { result = new(false, "Falha de rede ao enviar o Magic Packet."); }
+                }
                 using var complete = await client.PostAsJsonAsync(
                     $"{basePath}/jobs/{job.Id}/complete?machineId={job.MachineId}", result, json, stoppingToken);
                 if (!complete.IsSuccessStatusCode)
@@ -75,11 +94,11 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger) : BackgroundServi
         }
     }
 
-    private static async Task<RemoteJobResult> WakeAsync(RemoteJob job, CancellationToken cancellationToken)
+    private async Task<RemoteJobResult> WakeAsync(RemoteJob job, CancellationToken cancellationToken)
     {
         if (job.Action != "wake" || job.MacAddress is null || job.BroadcastAddress is null)
             return new(false, "Pedido de wake inválido.");
-        var allowed = (Environment.GetEnvironmentVariable("REMOTE_WAKE_ALLOWED_BROADCASTS") ?? "")
+        var allowed = (Setting("REMOTE_WAKE_ALLOWED_BROADCASTS") ?? "")
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         if (!allowed.Contains(job.BroadcastAddress, StringComparer.OrdinalIgnoreCase)
             || !IPAddress.TryParse(job.BroadcastAddress, out var destination)
@@ -97,13 +116,13 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger) : BackgroundServi
         return new(true, "Magic Packet enviado pelo gateway residencial.");
     }
 
-    private static RemoteJobResult RunAction(RemoteJob job, Guid machineId)
+    private RemoteJobResult RunAction(RemoteJob job, Guid machineId)
     {
         if (job.MachineId != machineId || job.Action is not ("shutdown" or "restart"))
             return new(false, "Ação não permitida para este agente.");
-        if (Environment.GetEnvironmentVariable("REMOTE_WAKE_DRY_RUN") == "true")
+        if (Setting("REMOTE_WAKE_DRY_RUN") == "true")
             return new(true, $"Simulação: {job.Action} recebido; nenhuma ação executada.");
-        if (Environment.GetEnvironmentVariable("REMOTE_WAKE_POWER_ACTIONS_ENABLED") != "true")
+        if (Setting("REMOTE_WAKE_POWER_ACTIONS_ENABLED") != "true")
             return new(false, "Ações de energia desativadas neste agente.");
 
         try

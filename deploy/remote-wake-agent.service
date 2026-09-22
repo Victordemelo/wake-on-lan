@@ -1,0 +1,21 @@
+[Unit]
+Description=Remote Wake agent
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=notify
+WorkingDirectory=/opt/remote-wake
+ExecStart=/opt/remote-wake/RemoteWake.Worker --settings /etc/remote-wake/worker.json
+Restart=on-failure
+RestartSec=10
+# Requires root to schedule system shutdown. Never enable arbitrary commands.
+User=root
+UMask=0077
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
