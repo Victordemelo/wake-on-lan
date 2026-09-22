@@ -164,6 +164,21 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .loading-grid span { height: 330px; border-radius: 14px; background: linear-gradient(90deg, #0b1722, #10222e, #0b1722); background-size: 200%; animation: loading 1.4s infinite; }
 @keyframes loading { to { background-position: -200% 0; } }
 
+.activity-section { margin-top: 2.5rem; scroll-margin-top: 2rem; }
+.activity-list { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.activity-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) auto; align-items: center; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--line); }
+.activity-row:last-child { border-bottom: 0; }
+.activity-row strong { font-size: .78rem; overflow-wrap: anywhere; }
+.activity-row p, .activity-empty { color: #91a6b1; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.activity-row p { margin: .25rem 0 0; }
+.activity-row time { color: #91a6b1; font-size: .65rem; }
+.activity-success, .activity-failure { font-size: .65rem; }
+.activity-success { color: var(--mint); }
+.activity-failure { color: #ff9ba5; }
+@media (max-width: 720px) {
+  .activity-row { grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+}
+
 /* Dialog */
 .dialog-backdrop { position: fixed; z-index: 20; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(2, 8, 13, .78); backdrop-filter: blur(10px); }
 .dialog { width: min(560px, 100%); max-height: 94vh; overflow: auto; border: 1px solid rgba(173, 207, 224, .15); border-radius: 18px; background: #0b1823; box-shadow: 0 35px 110px rgba(0, 0, 0, .55); }

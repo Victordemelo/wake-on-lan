@@ -2,9 +2,9 @@ import { FormEvent, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Server, Settings,
-  ShieldCheck, Trash2, Wifi, X, RotateCcw, KeyRound,
+  ShieldCheck, Trash2, Wifi, X, RotateCcw, KeyRound, Pencil,
 } from 'lucide-react'
-import { api, AuthResponse, Machine, MachineInput, session, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, AuthResponse, Machine, MachineInput, session, WakeMethod } from './api'
 import ProjectShowcase from './components/ui/ProjectShowcase'
 
 const emptyMachine: MachineInput = {
@@ -25,6 +25,8 @@ function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(session.get()))
   const [machines, setMachines] = useState<Machine[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<Machine | null>(null)
+  const [activities, setActivities] = useState<ActivityItem[]>([])
   const [message, setMessage] = useState('')
   const [loadingMachines, setLoadingMachines] = useState(true)
   const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
@@ -32,12 +34,14 @@ function App() {
   const loadMachines = async (quiet = false) => {
     if (!quiet) setLoadingMachines(true)
     try {
-      setMachines(await api.machines())
-    } catch {
-      if (!quiet) {
+      const [items, history] = await Promise.all([api.machines(), api.activity()])
+      setMachines(items)
+      setActivities(history)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
         session.clear()
         setAuthenticated(false)
-      }
+      } else if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
     } finally {
       if (!quiet) setLoadingMachines(false)
     }
@@ -102,10 +106,10 @@ function App() {
           <a className="nav-item active" href="#machines"><LayoutDashboard size={18} /> Visão geral</a>
           <a className="nav-item" href="#machines"><Monitor size={18} /> Máquinas <span>{machines.length}</span></a>
           <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Radio size={18} /> Gateway <small>Guia</small></a>
-          <button className="nav-item" disabled><ScrollText size={18} /> Atividades</button>
+          <a className="nav-item" href="#activity"><ScrollText size={18} /> Atividades</a>
         </nav>
         <div className="sidebar-bottom">
-          <button className="nav-item" disabled><Settings size={18} /> Configurações</button>
+          <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Settings size={18} /> Instalação</a>
           <div className="local-status"><span /><div><strong>Servidor local</strong><small>Operacional</small></div></div>
           <button className="nav-item logout" onClick={logout}><LogOut size={18} /> Sair</button>
         </div>
@@ -156,36 +160,51 @@ function App() {
           ) : (
             <section className="machine-grid">
               {machines.map((machine) => (
-                <MachineCard key={machine.id} machine={machine} onWake={() => void wake(machine)} onAction={(action) => void powerAction(machine, action)} onAgentSetup={() => void openAgentSetup(machine)} onRemove={async () => {
+                <MachineCard key={machine.id} machine={machine} onEdit={() => setEditing(machine)} onWake={() => void wake(machine)} onAction={(action) => void powerAction(machine, action)} onAgentSetup={() => void openAgentSetup(machine)} onRemove={async () => {
                   if (confirm(`Remover ${machine.name}?`)) {
+                    try {
                     await api.removeMachine(machine.id)
                     await loadMachines()
+                    } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao remover.') }
                   }
                 }} />
               ))}
               <button className="add-machine-card" onClick={() => setShowForm(true)}><span><Plus size={23} /></span><strong>Adicionar outra máquina</strong><small>Configure um novo dispositivo</small></button>
             </section>
           )}
+          <section className="activity-section" id="activity">
+            <div className="section-heading"><div><h2>Atividades recentes</h2><p>Últimas 100 tentativas de ligar, desligar e reiniciar.</p></div></div>
+            {activities.length === 0 ? <p className="activity-empty">Nenhuma ação registrada.</p> : <div className="activity-list">{activities.map((item) => <article key={item.id} className="activity-row">
+              <span className={item.succeeded ? 'activity-success' : 'activity-failure'}>{item.succeeded ? 'Confirmado' : 'Sem sucesso'}</span>
+              <div><strong>{item.machineName} · {({ wake: 'Ligar', shutdown: 'Desligar', restart: 'Reiniciar' } as Record<string, string>)[item.action] ?? item.action}</strong><p>{item.message}</p></div>
+              <time dateTime={item.requestedAt}>{formatDate(item.requestedAt)}</time>
+            </article>)}</div>}
+          </section>
         </section>
       </main>
 
-      {showForm && <MachineDialog onClose={() => setShowForm(false)} onSaved={async () => {
+      {(showForm || editing) && <MachineDialog initial={editing} onClose={() => { setShowForm(false); setEditing(null) }} onSaved={async () => {
         setShowForm(false)
-        setMessage('Máquina cadastrada com sucesso.')
+        setEditing(null)
+        setMessage('Máquina salva com sucesso.')
         await loadMachines()
       }} />}
       {agentSetup && <div className="dialog-backdrop" onMouseDown={() => setAgentSetup(null)}>
         <div className="dialog agent-setup" role="dialog" aria-modal="true" aria-label="Configurar agente" onMouseDown={(event) => event.stopPropagation()}>
           <div className="dialog-title"><div><span className="dialog-icon"><KeyRound size={20} /></span><div><h2>Agente de {agentSetup.machine.name}</h2><p>Guarde esta chave somente no computador controlado.</p></div></div><button className="icon-button" onClick={() => setAgentSetup(null)} aria-label="Fechar"><X size={20} /></button></div>
           <div className="dialog-body"><p>ID da máquina</p><code>{agentSetup.machine.id}</code><p>Chave do agente</p><code className="secret-key">{agentSetup.key}</code><p>Configure <code>REMOTE_WAKE_MACHINE_ID</code> e <code>REMOTE_WAKE_KEY</code> no serviço local. Veja o <a href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer">guia de instalação</a>.</p></div>
-          <div className="dialog-actions"><button className="button secondary" onClick={() => setAgentSetup(null)}>Fechar</button></div>
+          <div className="dialog-actions"><button className="button secondary" onClick={async () => {
+            if (!confirm('Revogar a chave atual? O agente precisará ser configurado novamente.')) return
+            try { await api.revokeAgent(agentSetup.machine.id); setAgentSetup(null); setMessage('Chave revogada. Abra a configuração para obter a nova chave.'); await loadMachines() }
+            catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao revogar.') }
+          }}>Revogar chave</button><button className="button secondary" onClick={() => setAgentSetup(null)}>Fechar</button></div>
         </div>
       </div>}
     </div>
   )
 }
 
-function MachineCard({ machine, onWake, onAction, onAgentSetup, onRemove }: { machine: Machine; onWake: () => void; onAction: (action: 'shutdown' | 'restart') => void; onAgentSetup: () => void; onRemove: () => void }) {
+function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove }: { machine: Machine; onWake: () => void; onAction: (action: 'shutdown' | 'restart') => void; onAgentSetup: () => void; onEdit: () => void; onRemove: () => void }) {
   return (
     <article className="machine-card">
       <div className="machine-top">
@@ -203,6 +222,7 @@ function MachineCard({ machine, onWake, onAction, onAgentSetup, onRemove }: { ma
       {machine.lastWakeRequestedAt && <p className="last-action"><Activity size={14} /> Último envio {formatDate(machine.lastWakeRequestedAt)}</p>}
       <div className="card-actions">
         <button className="button power-button" onClick={onWake}><Power size={18} /> Ligar máquina</button>
+        <button className="icon-button" onClick={onEdit} aria-label={`Editar ${machine.name}`}><Pencil size={16} /></button>
         <button className="icon-button danger" onClick={onRemove} aria-label={`Remover ${machine.name}`}><Trash2 size={18} /></button>
       </div>
       <div className="card-actions secondary-actions">
@@ -239,6 +259,8 @@ function ProjectCallToAction() {
 }
 
 function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse) => void }) {
+  const [registrationOpen, setRegistrationOpen] = useState(false)
+  useEffect(() => { void api.registration().then((result) => setRegistrationOpen(result.open)).catch(() => {}) }, [])
   const [register, setRegister] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -295,7 +317,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse)
           </label>
           {error && <div className="error" role="alert">{error}</div>}
           <button className="button primary submit-button" disabled={loading}>{loading ? 'Aguarde...' : register ? 'Criar minha conta' : 'Entrar no painel'} {!loading && <ArrowRight size={18} />}</button>
-          <div className="auth-switch"><span>{register ? 'Já possui uma conta?' : 'Primeira vez por aqui?'}</span><button type="button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Fazer login' : 'Criar conta'}</button></div>
+          {registrationOpen && <div className="auth-switch"><span>{register ? 'Já possui uma conta?' : 'Primeira vez por aqui?'}</span><button type="button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Fazer login' : 'Criar conta'}</button></div>}
         </form>
       </section>
 
@@ -304,8 +326,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse)
   )
 }
 
-function MachineDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [machine, setMachine] = useState(emptyMachine)
+function MachineDialog({ initial, onClose, onSaved }: { initial: Machine | null; onClose: () => void; onSaved: () => void }) {
+  const [machine, setMachine] = useState<MachineInput>(initial ?? emptyMachine)
   const [error, setError] = useState('')
 
   const update = <K extends keyof MachineInput>(key: K, value: MachineInput[K]) =>
@@ -314,7 +336,8 @@ function MachineDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     try {
-      await api.addMachine(machine)
+      if (initial) await api.updateMachine(initial.id, machine)
+      else await api.addMachine(machine)
       onSaved()
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'Não foi possível cadastrar.')
@@ -324,7 +347,7 @@ function MachineDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
       <form className="dialog" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
-        <div className="dialog-title"><div><span className="dialog-icon"><Monitor size={20} /></span><div><h2>Nova máquina</h2><p>Configure o destino do Magic Packet.</p></div></div><button type="button" className="icon-button" onClick={onClose}><X size={20} /></button></div>
+        <div className="dialog-title"><div><span className="dialog-icon"><Monitor size={20} /></span><div><h2>{initial ? 'Editar máquina' : 'Nova máquina'}</h2><p>Configure o destino do Magic Packet.</p></div></div><button type="button" className="icon-button" onClick={onClose} aria-label="Fechar"><X size={20} /></button></div>
         <div className="dialog-body">
           <label>Nome da máquina<input value={machine.name} onChange={(e) => update('name', e.target.value)} placeholder="Ex.: PC principal" required /></label>
           <label>Endereço MAC<input value={machine.macAddress} onChange={(e) => update('macAddress', e.target.value)} placeholder="AA:BB:CC:DD:EE:FF" required /><small>Use o MAC da placa Ethernet que receberá o pacote.</small></label>
