@@ -8,6 +8,9 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
 }
 
+// Sessions used to live in localStorage (JWT); the cookie session replaces it.
+try { localStorage.removeItem('remote-wake-token') } catch { /* storage unavailable */ }
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

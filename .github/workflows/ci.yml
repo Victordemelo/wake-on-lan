@@ -68,7 +68,6 @@ jobs:
       - name: Validar os arquivos do Compose e a imagem web
         env:
           POSTGRES_PASSWORD: ci-only
-          JWT_KEY: ci-only-signing-key-long-enough-for-hmac-sha256
           DOMAIN: remotewake.example.test
         run: |
           docker compose -f compose.yaml config -q

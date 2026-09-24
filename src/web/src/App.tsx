@@ -2,10 +2,12 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
-  ShieldCheck, Trash2, Wifi, X, RotateCcw, KeyRound, Pencil,
+  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, X, RotateCcw, KeyRound, Pencil,
 } from 'lucide-react'
-import { api, ApiError, ActivityItem, AuthResponse, Machine, MachineInput, session, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, Machine, MachineInput, RegistrationStatus, User, WakeMethod } from './api'
+import AccountDialog from './components/AccountDialog'
 import ProjectShowcase from './components/ui/ProjectShowcase'
+import { formatDate } from './format'
 
 const emptyMachine: MachineInput = {
   name: '', macAddress: '', hostname: '', broadcastAddress: '255.255.255.255',
@@ -22,7 +24,9 @@ function Brand({ compact = false }: { compact?: boolean }) {
 }
 
 function App() {
-  const [authenticated, setAuthenticated] = useState(Boolean(session.get()))
+  // undefined while checking the session cookie, null when signed out.
+  const [user, setUser] = useState<User | null | undefined>(undefined)
+  const [showAccount, setShowAccount] = useState(false)
   const [machines, setMachines] = useState<Machine[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Machine | null>(null)
@@ -37,29 +41,30 @@ function App() {
       setMachines(items)
       setActivities(history)
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        session.clear()
-        setAuthenticated(false)
-      } else if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
+      if (error instanceof ApiError && error.status === 401) setUser(null)
+      else if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
     } finally {
       setLoadingMachines(false)
     }
   }, [])
 
   useEffect(() => {
-    if (!authenticated) return
+    api.me().then(setUser, () => setUser(null))
+  }, [])
+
+  const userId = user?.id
+  useEffect(() => {
+    if (!userId) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- state only changes after the requests resolve
     void loadMachines()
     const timer = window.setInterval(() => void loadMachines(true), 15000)
     return () => window.clearInterval(timer)
-  }, [authenticated, loadMachines])
+  }, [userId, loadMachines])
 
-  if (!authenticated) {
-    return <AuthScreen onAuthenticated={(auth) => {
-      session.set(auth.token)
-      setAuthenticated(true)
-    }} />
-  }
+  if (user === undefined) return <div className="boot-screen" aria-busy="true" aria-label="Carregando" />
+  if (user === null) return <AuthScreen onAuthenticated={setUser} />
+
+  const gatewayOnline = machines.some((machine) => machine.gatewayOnline)
 
   const wake = async (machine: Machine) => {
     setMessage(`Enviando Magic Packet para ${machine.name}...`)
@@ -72,9 +77,16 @@ function App() {
     }
   }
 
+  const signedOut = () => {
+    setShowAccount(false)
+    setMachines([])
+    setActivities([])
+    setLoadingMachines(true)
+    setUser(null)
+  }
+
   const logout = () => {
-    session.clear()
-    setAuthenticated(false)
+    void api.logout().catch(() => undefined).finally(signedOut)
   }
 
   const powerAction = async (machine: Machine, action: 'shutdown' | 'restart') => {
@@ -107,6 +119,7 @@ function App() {
           <a className="nav-item" href="#machines"><Monitor size={18} /> Máquinas <span>{machines.length}</span></a>
           <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Radio size={18} /> Gateway <small>Guia</small></a>
           <a className="nav-item" href="#activity"><ScrollText size={18} /> Atividades</a>
+          <button className="nav-item" onClick={() => setShowAccount(true)}><UserRound size={18} /> Minha conta</button>
         </nav>
         <div className="sidebar-bottom">
           <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Settings size={18} /> Instalação</a>
@@ -118,14 +131,17 @@ function App() {
       <main className="workspace">
         <header className="mobile-topbar">
           <Brand />
-          <button className="icon-button" onClick={logout} aria-label="Sair"><LogOut size={19} /></button>
+          <div>
+            <button className="icon-button" onClick={() => setShowAccount(true)} aria-label="Minha conta"><UserRound size={19} /></button>
+            <button className="icon-button" onClick={logout} aria-label="Sair"><LogOut size={19} /></button>
+          </div>
         </header>
 
         <section className="content" id="machines">
           <div className="page-heading">
             <div>
               <div className="breadcrumb">PAINEL <ChevronRight size={13} /> VISÃO GERAL</div>
-              <h1>Olá, pronto para acordar suas máquinas?</h1>
+              <h1>Olá, {user.name.split(' ')[0]}. Pronto para acordar suas máquinas?</h1>
               <p>Gerencie seus dispositivos e envie comandos de qualquer lugar.</p>
             </div>
             <button className="button primary" onClick={() => setShowForm(true)}><Plus size={18} /> Nova máquina</button>
@@ -138,11 +154,16 @@ function App() {
             </article>
             <article className="stat-card">
               <span className="stat-icon cyan"><Network size={21} /></span>
-              <div><small>GATEWAY</small><strong>{machines.some((machine) => machine.gatewayOnline) ? 'Online' : 'Pendente'}</strong><p>Disponível após configurar o serviço na residência</p></div>
+              <div><small>GATEWAY</small><strong>{gatewayOnline ? 'Online' : 'Pendente'}</strong><p>{gatewayOnline ? 'Serviço da residência conectado' : 'Disponível após configurar o serviço na residência'}</p></div>
             </article>
             <article className="stat-card">
-              <span className="stat-icon violet"><ShieldCheck size={21} /></span>
-              <div><small>API</small><strong>Protegida</strong><p>Autenticação JWT ativa</p></div>
+              <span className="stat-icon violet">{user.twoFactorEnabled ? <ShieldCheck size={21} /> : <ShieldAlert size={21} />}</span>
+              <div>
+                <small>SEGURANÇA</small>
+                <strong>{user.twoFactorEnabled ? 'Duas etapas ativa' : 'Somente senha'}</strong>
+                <p>{user.twoFactorEnabled ? 'O login pede o código do aplicativo autenticador.'
+                  : <>Ative a verificação em duas etapas em <button className="link-button" onClick={() => setShowAccount(true)}>Minha conta</button>.</>}</p>
+              </div>
             </article>
           </section>
 
@@ -189,6 +210,7 @@ function App() {
         setMessage('Máquina salva com sucesso.')
         await loadMachines()
       }} />}
+      {showAccount && <AccountDialog user={user} onClose={() => setShowAccount(false)} onUserChange={setUser} onSignedOut={signedOut} />}
       {agentSetup && <div className="dialog-backdrop" onMouseDown={() => setAgentSetup(null)}>
         <div className="dialog agent-setup" role="dialog" aria-modal="true" aria-label="Configurar agente" onMouseDown={(event) => event.stopPropagation()}>
           <div className="dialog-title"><div><span className="dialog-icon"><KeyRound size={20} /></span><div><h2>Agente de {agentSetup.machine.name}</h2><p>Guarde esta chave somente no computador controlado.</p></div></div><button className="icon-button" onClick={() => setAgentSetup(null)} aria-label="Fechar"><X size={20} /></button></div>
@@ -258,30 +280,61 @@ function ProjectCallToAction() {
   )
 }
 
-function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse) => void }) {
-  const [registrationOpen, setRegistrationOpen] = useState(false)
-  useEffect(() => { void api.registration().then((result) => setRegistrationOpen(result.open)).catch(() => {}) }, [])
-  const [register, setRegister] = useState(false)
+type AuthMode = 'login' | 'register' | 'two-factor'
+
+function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
+  const [registration, setRegistration] = useState<RegistrationStatus>({ open: false, setupRequired: false })
+  const [mode, setMode] = useState<AuthMode>('login')
+  // Kept only in memory, to finish the login after the two-step code.
+  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
+  useEffect(() => {
+    api.registration().then((status) => {
+      setRegistration(status)
+      if (status.setupRequired) setMode('register')
+    }, () => undefined)
+  }, [])
+
+  const switchMode = (next: AuthMode) => {
+    setMode(next)
+    setError('')
+    if (next !== 'two-factor') setCredentials(null)
+  }
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const data = new FormData(event.currentTarget)
+    const email = String(data.get('email') ?? credentials?.email ?? '')
+    const password = String(data.get('password') ?? credentials?.password ?? '')
     setLoading(true)
     setError('')
     try {
-      const result = register
-        ? await api.register(String(data.get('name')), String(data.get('email')), String(data.get('password')))
-        : await api.login(String(data.get('email')), String(data.get('password')))
-      onAuthenticated(result)
+      const result = mode === 'register'
+        ? await api.register(String(data.get('name')), email, password, registration.setupRequired ? String(data.get('setupToken')) : undefined)
+        : await api.login(email, password, mode === 'two-factor' ? String(data.get('code')) : undefined)
+      onAuthenticated(result.user)
     } catch (problem) {
-      setError(problem instanceof Error ? problem.message : 'Não foi possível entrar.')
+      if (problem instanceof ApiError && problem.twoFactorRequired && mode === 'login') {
+        setCredentials({ email, password })
+        setMode('two-factor')
+      } else {
+        setError(problem instanceof Error ? problem.message : 'Não foi possível entrar.')
+      }
     } finally {
       setLoading(false)
     }
   }
+
+  const heading = mode === 'two-factor'
+    ? { eyebrow: 'VERIFICAÇÃO EM DUAS ETAPAS', title: 'Digite o código', text: 'Abra o aplicativo autenticador ou use um dos códigos de recuperação.' }
+    : mode === 'register' && registration.setupRequired
+      ? { eyebrow: 'CONFIGURAÇÃO INICIAL', title: 'Crie a primeira conta', text: 'Ela será a conta principal desta instalação.' }
+      : mode === 'register'
+        ? { eyebrow: 'NOVA CONTA', title: 'Crie seu acesso', text: 'Leva menos de um minuto para começar.' }
+        : { eyebrow: 'ACESSO SEGURO', title: 'Bem-vindo de volta', text: 'Entre para acessar suas máquinas.' }
 
   return (
     <div className="landing-page">
@@ -307,17 +360,39 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (auth: AuthResponse)
 
         <form className="auth-card" onSubmit={submit}>
           <div className="auth-card-logo"><Brand compact /></div>
-          <p className="eyebrow">{register ? 'NOVA CONTA' : 'ACESSO SEGURO'}</p>
-          <h2>{register ? 'Crie seu acesso' : 'Bem-vindo de volta'}</h2>
-          <p>{register ? 'Leva menos de um minuto para começar.' : 'Entre para acessar suas máquinas.'}</p>
-          {register && <label>Nome completo<input name="name" minLength={2} required autoComplete="name" placeholder="Como devemos chamar você?" /></label>}
-          <label>E-mail<input name="email" type="email" required autoComplete="email" placeholder="voce@exemplo.com" /></label>
-          <label>Senha
-            <span className="password-field"><input name="password" type={showPassword ? 'text' : 'password'} minLength={8} required autoComplete={register ? 'new-password' : 'current-password'} placeholder="Mínimo de 8 caracteres" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label="Mostrar senha">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></span>
-          </label>
+          <p className="eyebrow">{heading.eyebrow}</p>
+          <h2>{heading.title}</h2>
+          <p>{heading.text}</p>
+          {mode === 'two-factor' ? (
+            <label>Código de verificação
+              <input key="code" name="code" required autoFocus autoComplete="one-time-code" placeholder="123456 ou código de recuperação" />
+            </label>
+          ) : (
+            <>
+              {mode === 'register' && registration.setupRequired && (
+                <label>Código de configuração
+                  <input name="setupToken" required autoComplete="off" spellCheck={false} placeholder="XXXX-XXXX-XXXX" />
+                  <small>Aparece nos logs da API: <code>docker compose logs api</code></small>
+                </label>
+              )}
+              {mode === 'register' && <label>Nome completo<input name="name" minLength={2} required autoComplete="name" placeholder="Como devemos chamar você?" /></label>}
+              <label>E-mail<input name="email" type="email" required autoComplete="email" placeholder="voce@exemplo.com" /></label>
+              <label>Senha
+                <span className="password-field"><input name="password" type={showPassword ? 'text' : 'password'} minLength={8} required autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder="Mínimo de 8 caracteres" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label="Mostrar senha">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></span>
+              </label>
+            </>
+          )}
           {error && <div className="error" role="alert">{error}</div>}
-          <button className="button primary submit-button" disabled={loading}>{loading ? 'Aguarde...' : register ? 'Criar minha conta' : 'Entrar no painel'} {!loading && <ArrowRight size={18} />}</button>
-          {registrationOpen && <div className="auth-switch"><span>{register ? 'Já possui uma conta?' : 'Primeira vez por aqui?'}</span><button type="button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Fazer login' : 'Criar conta'}</button></div>}
+          <button className="button primary submit-button" disabled={loading}>
+            {loading ? 'Aguarde...' : mode === 'register' ? 'Criar conta' : mode === 'two-factor' ? 'Verificar' : 'Entrar no painel'} {!loading && <ArrowRight size={18} />}
+          </button>
+          {mode === 'two-factor' && <div className="auth-switch"><span>Entrou com outra conta?</span><button type="button" onClick={() => switchMode('login')}>Voltar</button></div>}
+          {mode !== 'two-factor' && registration.open && !registration.setupRequired && (
+            <div className="auth-switch">
+              <span>{mode === 'register' ? 'Já possui uma conta?' : 'Primeira vez por aqui?'}</span>
+              <button type="button" onClick={() => switchMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? 'Fazer login' : 'Criar conta'}</button>
+            </div>
+          )}
         </form>
       </section>
 
@@ -372,7 +447,6 @@ function MachineDialog({ initial, onClose, onSaved }: { initial: Machine | null;
 }
 
 const formatMac = (mac: string) => mac.match(/.{1,2}/g)?.join(':') ?? mac
-const formatDate = (date: string) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(date))
 const methodLabel = (method: WakeMethod) => ({
   LocalBroadcast: 'Rede local / VPN', WakeOnWan: 'Wake-on-WAN', TailscaleGateway: 'Tailscale',
 })[method]

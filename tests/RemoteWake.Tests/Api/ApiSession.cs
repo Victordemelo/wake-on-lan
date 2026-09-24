@@ -1,14 +1,17 @@
-using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RemoteWake.Api.Contracts;
+using RemoteWake.Api.Services;
 
 namespace RemoteWake.Tests.Api;
 
-// An authenticated user of the API, as the web app would be.
+// A signed-in user of the API, as the web app would be: session cookie plus the
+// anti-CSRF header on every request.
 public sealed class ApiSession(HttpClient http, UserResponse user)
 {
+    public const string DefaultPassword = "Senha-forte-123";
+
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() }
@@ -19,27 +22,39 @@ public sealed class ApiSession(HttpClient http, UserResponse user)
 
     public static string NewEmail() => $"user-{Guid.NewGuid():N}@example.test";
 
-    public static async Task<ApiSession> RegisterAsync(ApiFactory api, string? email = null, string password = "Senha-forte-123")
+    // A browser client without a session: keeps cookies and sends the anti-CSRF header.
+    public static HttpClient Anonymous(ApiFactory api)
     {
         var http = api.CreateClient();
-        var response = await http.PostAsJsonAsync("/api/auth/register",
-            new { name = "Usuário de teste", email = email ?? NewEmail(), password }, TestContext.Current.CancellationToken);
-        return await AuthenticateAsync(http, response);
+        http.DefaultRequestHeaders.Add(CsrfGuard.Header, "1");
+        return http;
     }
 
-    public static async Task<ApiSession> LoginAsync(ApiFactory api, string email, string password)
+    public static async Task<ApiSession> RegisterAsync(ApiFactory api, string? email = null, string password = DefaultPassword)
     {
-        var http = api.CreateClient();
-        var response = await http.PostAsJsonAsync("/api/auth/login", new { email, password }, TestContext.Current.CancellationToken);
-        return await AuthenticateAsync(http, response);
+        var http = Anonymous(api);
+        var response = await http.PostAsJsonAsync("/api/auth/register", new
+        {
+            name = "Usuário de teste",
+            email = email ?? NewEmail(),
+            password,
+            setupToken = ApiFactory.SetupToken
+        }, TestContext.Current.CancellationToken);
+        return await SignedInAsync(http, response);
     }
 
-    private static async Task<ApiSession> AuthenticateAsync(HttpClient http, HttpResponseMessage response)
+    public static async Task<ApiSession> LoginAsync(ApiFactory api, string email, string password, string? code = null)
+    {
+        var http = Anonymous(api);
+        var response = await http.PostAsJsonAsync("/api/auth/login", new { email, password, code }, TestContext.Current.CancellationToken);
+        return await SignedInAsync(http, response);
+    }
+
+    private static async Task<ApiSession> SignedInAsync(HttpClient http, HttpResponseMessage response)
     {
         response.EnsureSuccessStatusCode();
         var auth = await response.Content.ReadFromJsonAsync<AuthResponse>(Json, TestContext.Current.CancellationToken);
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", auth!.Token);
-        return new ApiSession(http, auth.User);
+        return new ApiSession(http, auth!.User);
     }
 
     public static object Machine(string name = "PC de teste", string destination = "192.168.1.255",

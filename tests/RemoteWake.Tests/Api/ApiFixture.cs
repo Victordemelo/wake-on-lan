@@ -65,6 +65,7 @@ public sealed class ApiFactory(string connectionString, IReadOnlyDictionary<stri
 {
     public const string GatewayKey = "test-gateway-key";
     public const string GatewayOwner = "gateway.owner@example.test";
+    public const string SetupToken = "TEST-SETUP-CODE";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -72,14 +73,13 @@ public sealed class ApiFactory(string connectionString, IReadOnlyDictionary<stri
         var settings = new Dictionary<string, string?>
         {
             ["ConnectionStrings:Database"] = connectionString,
-            ["Jwt:Key"] = "test-only-signing-key-long-enough-for-hmac-sha256",
-            ["Jwt:Issuer"] = "RemoteWake",
-            ["Jwt:Audience"] = "RemoteWake.Web",
+            ["Setup:Token"] = SetupToken,
             ["Gateway:Key"] = GatewayKey,
             ["Gateway:OwnerEmail"] = GatewayOwner,
             ["Agent:MasterKey"] = "test-agent-master-key",
             ["Registration:Open"] = "true",
             ["RateLimits:AuthPerMinute"] = "1000",
+            ["RateLimits:CommandsPerMinute"] = "1000",
             ["ForwardedHeaders:TrustedNetworks:0"] = "172.16.0.0/12"
         };
         foreach (var (key, value) in overrides) settings[key] = value;
@@ -141,5 +141,5 @@ public sealed class ClosedRegistrationApi : ApiFixture
 public sealed class StrictRateLimitApi : ApiFixture
 {
     protected override IReadOnlyDictionary<string, string?> Settings =>
-        new Dictionary<string, string?> { ["RateLimits:AuthPerMinute"] = "2" };
+        new Dictionary<string, string?> { ["RateLimits:AuthPerMinute"] = "2", ["RateLimits:CommandsPerMinute"] = "2" };
 }

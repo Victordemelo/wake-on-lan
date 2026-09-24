@@ -15,6 +15,7 @@ public sealed class ForwardedHeadersTests(StrictRateLimitApi fixture) : IClassFi
             Content = JsonContent.Create(new { email = "ninguem@example.test", password = "Senha-errada-123" })
         };
         request.Headers.Add(TestPeerStartupFilter.Header, peer);
+        request.Headers.Add(RemoteWake.Api.Services.CsrfGuard.Header, "1");
         if (forwardedFor is not null) request.Headers.Add("X-Forwarded-For", forwardedFor);
         return (await fixture.Api.CreateClient().SendAsync(request, Ct)).StatusCode;
     }

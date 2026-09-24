@@ -13,8 +13,11 @@ function Check($Condition, [string]$Message) {
     if (!$Condition) { throw $Message }
     Write-Host "PASS: $Message"
 }
-function Request([string]$Method, [string]$Path, $Body = $null, $Headers = @{}, [int]$Expected = 200) {
-    $parameters = @{ Method=$Method; Uri="$script:base$Path"; Headers=$Headers; UseBasicParsing=$true; TimeoutSec=35 }
+# $Session carries the browser session cookie; the anti-CSRF header goes on every call.
+function Request([string]$Method, [string]$Path, $Body = $null, $Session = $null, [int]$Expected = 200, $Headers = @{}) {
+    $allHeaders = @{ 'X-Remote-Wake-Request' = '1' } + $Headers
+    $parameters = @{ Method=$Method; Uri="$script:base$Path"; Headers=$allHeaders; UseBasicParsing=$true; TimeoutSec=35 }
+    if ($null -ne $Session) { $parameters.WebSession = $Session }
     if ($null -ne $Body) { $parameters.Body = $Body | ConvertTo-Json; $parameters.ContentType='application/json' }
     try { $response = Invoke-WebRequest @parameters; $status = [int]$response.StatusCode }
     catch {
@@ -28,7 +31,7 @@ function Request([string]$Method, [string]$Path, $Body = $null, $Headers = @{}, 
 }
 function WaitOnline([string]$Property) {
     for ($i=0; $i -lt 30; $i++) {
-        $items = @(Request GET /api/machines/ -Headers $script:auth)
+        $items = @(Request GET /api/machines/ -Session $script:auth)
         if ($items[0].$Property) { return }
         Start-Sleep -Milliseconds 500
     }
@@ -54,8 +57,7 @@ try {
     $containers += $api
     DockerRun @('run','-d','--name',$api,'--network',$prefix,'-p','127.0.0.1::8080',
         '-e',"ConnectionStrings__Database=Host=$db;Database=test;Username=postgres;Password=test-only",
-        '-e','Jwt__Key=integration-only-key-at-least-thirty-two-characters',
-        '-e','Jwt__Issuer=RemoteWake','-e','Jwt__Audience=RemoteWake.Web',
+        '-e','Setup__Token=integration-setup-code',
         '-e',"Gateway__Key=$gatewayKey",'-e','Gateway__OwnerEmail=owner@example.test',
         '-e','Agent__MasterKey=integration-only-agent-master-key','-e','Registration__Open=true','remote-wake-test-api') | Out-Null
     $port = (DockerRun @('port',$api,'8080/tcp')).Trim().Split(':')[-1]
@@ -63,10 +65,11 @@ try {
     for ($i=0; $i -lt 50; $i++) {
         try { Invoke-WebRequest "$script:base/health" -UseBasicParsing -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep -Milliseconds 500 }
     }
-    $owner = Request POST /api/auth/register @{name='Test owner';email='owner@example.test';password='Test-only-pass123!'}
-    $other = Request POST /api/auth/register @{name='Other owner';email='other@example.test';password='Test-only-pass123!'}
-    $script:auth = @{Authorization="Bearer $($owner.token)"}
-    $otherAuth = @{Authorization="Bearer $($other.token)"}
+    $script:auth = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $otherAuth = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    Request POST /api/auth/register @{name='Test owner';email='owner@example.test';password='Test-only-pass123!';setupToken='integration-setup-code'} $script:auth | Out-Null
+    Request POST /api/auth/register @{name='Other owner';email='other@example.test';password='Test-only-pass123!'} $otherAuth | Out-Null
+    Check ((Request GET /api/auth/me -Session $script:auth).email -eq 'owner@example.test') 'Cookie session'
     $inputMachine = @{name='Test PC';macAddress='02:00:00:00:00:01';hostname='test';broadcastAddress='127.0.0.1';wolPort=9;wakeMethod='TailscaleGateway'}
     $machine = Request POST /api/machines/ $inputMachine $auth 201
     $id = $machine.id
@@ -74,9 +77,9 @@ try {
     $edited = Request PUT "/api/machines/$id" $inputMachine $auth
     Check ($edited.name -eq 'Edited PC') 'Machine editing'
     Request PUT "/api/machines/$id" $inputMachine $otherAuth 404 | Out-Null
-    Request POST "/api/machines/$id/agent-key" -Headers $otherAuth -Expected 404 | Out-Null
-    Check (@(Request GET /api/activity -Headers $otherAuth).Count -eq 0) 'Owner isolation'
-    $key = (Request POST "/api/machines/$id/agent-key" -Headers $auth).key
+    Request POST "/api/machines/$id/agent-key" -Session $otherAuth -Expected 404 | Out-Null
+    Check (@(Request GET /api/activity -Session $otherAuth).Count -eq 0) 'Owner isolation'
+    $key = (Request POST "/api/machines/$id/agent-key" -Session $script:auth).key
     $gateway = "$prefix-gateway"; $agent = "$prefix-agent"
     $containers += $gateway
     DockerRun @('run','-d','--name',$gateway,'--network',$prefix,'-e','REMOTE_WAKE_MODE=gateway',
@@ -88,7 +91,7 @@ try {
         '-e',"REMOTE_WAKE_MACHINE_ID=$id",'-e','REMOTE_WAKE_DRY_RUN=true','remote-wake-test-worker') | Out-Null
     WaitOnline gatewayOnline
     WaitOnline agentOnline
-    Check ((Request POST "/api/machines/$id/wake" -Headers $auth).succeeded) 'Gateway wake (loopback only)'
+    Check ((Request POST "/api/machines/$id/wake" -Session $script:auth).succeeded) 'Gateway wake (loopback only)'
     foreach ($action in @('restart','shutdown')) {
         $result = Request POST "/api/machines/$id/actions" @{action=$action} $auth
         Check ($result.succeeded -and $result.message -match 'Simula') "$action dry run (no power action)"
@@ -96,28 +99,26 @@ try {
     Request POST "/api/machines/$id/actions" @{action='arbitrary-script'} $auth 400 | Out-Null
     $inputMachine.broadcastAddress='192.0.2.255'
     Request PUT "/api/machines/$id" $inputMachine $auth | Out-Null
-    $denied = Request POST "/api/machines/$id/wake" -Headers $auth -Expected 400
-    Check (@(Request GET /api/activity -Headers $auth).Count -eq 4) 'Persistent wake/action history including failures'
-    Check (@(Request GET /api/activity -Headers $otherAuth).Count -eq 0) 'History is private to owner'
-    Request DELETE "/api/machines/$id/agent-key" -Headers $auth -Expected 204 | Out-Null
+    $denied = Request POST "/api/machines/$id/wake" -Session $script:auth -Expected 400
+    Check (@(Request GET /api/activity -Session $script:auth).Count -eq 4) 'Persistent wake/action history including failures'
+    Check (@(Request GET /api/activity -Session $otherAuth).Count -eq 0) 'History is private to owner'
+    Request DELETE "/api/machines/$id/agent-key" -Session $script:auth -Expected 204 | Out-Null
     Request GET "/api/agent/$id/poll" -Headers @{'X-Remote-Wake-Key'=$key} -Expected 401 | Out-Null
-    $newKey = (Request POST "/api/machines/$id/agent-key" -Headers $auth).key
+    $newKey = (Request POST "/api/machines/$id/agent-key" -Session $script:auth).key
     Check ($key -ne $newKey) 'Revocation invalidates old key and generates a new key'
     Request GET /api/gateway/poll -Headers @{'X-Remote-Wake-Key'='invalid'} -Expected 401 | Out-Null
-    # Exercise additive upgrade against the previous schema in this disposable database only.
-    DockerRun @('stop',$api) | Out-Null
-    # Without the migration history the API treats the database as created by version 0.1 (EnsureCreated).
-    'ALTER TABLE "Machines" DROP COLUMN "AgentKeyVersion"; ALTER TABLE "WakeAttempts" DROP COLUMN "Action"; DROP TABLE "__EFMigrationsHistory";' |
-        & docker exec -i $db psql -v ON_ERROR_STOP=1 -U postgres -d test | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare legacy schema fixture.' }
-    DockerRun @('start',$api) | Out-Null
+    # Restart the API: data and login sessions live in PostgreSQL, not in memory.
+    # Upgrades of databases created by older versions are covered by tests/RemoteWake.Tests.
+    DockerRun @('restart',$api) | Out-Null
     $port = (DockerRun @('port',$api,'8080/tcp')).Trim().Split(':')[-1]
     $script:base = "http://127.0.0.1:$port"
+    $history = $null
     for ($i=0; $i -lt 50; $i++) {
-        try { $history = @(Request GET /api/activity -Headers $auth); break } catch { Start-Sleep -Milliseconds 500 }
+        try { $history = @(Request GET /api/activity -Session $script:auth); break } catch { Start-Sleep -Milliseconds 500 }
     }
-    Check ($history.Count -eq 4) 'Legacy schema upgrade preserves records'
-    Check (@(Request GET /api/machines/ -Headers $auth)[0].name -eq 'Edited PC') 'Restart preserves machines'
+    if ($null -eq $history) { throw 'API did not come back after restart.' }
+    Check ($history.Count -eq 4) 'Restart preserves history and the login session'
+    Check (@(Request GET /api/machines/ -Session $script:auth)[0].name -eq 'Edited PC') 'Restart preserves machines'
     Write-Host 'All integration checks passed.'
 }
 finally {

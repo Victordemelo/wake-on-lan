@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 
 namespace RemoteWake.Tests.Api;
 
-internal sealed record RegistrationStatus(bool Open);
+internal sealed record RegistrationStatus(bool Open, bool SetupRequired);
 
 public sealed class RegistrationTests(ClosedRegistrationApi fixture) : IClassFixture<ClosedRegistrationApi>
 {
@@ -12,14 +12,14 @@ public sealed class RegistrationTests(ClosedRegistrationApi fixture) : IClassFix
     {
         PostgresDatabase.SkipIfUnavailable();
         var ct = TestContext.Current.CancellationToken;
-        var anonymous = fixture.Api.CreateClient();
-        Assert.True((await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct))!.Open);
+        var anonymous = ApiSession.Anonymous(fixture.Api);
+        Assert.Equal(new RegistrationStatus(true, true), await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct));
 
         await ApiSession.RegisterAsync(fixture.Api);
 
-        Assert.False((await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct))!.Open);
+        Assert.Equal(new RegistrationStatus(false, false), await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct));
         var second = await anonymous.PostAsJsonAsync("/api/auth/register",
-            new { name = "Outra pessoa", email = ApiSession.NewEmail(), password = "Senha-forte-123" }, ct);
+            new { name = "Outra pessoa", email = ApiSession.NewEmail(), password = ApiSession.DefaultPassword }, ct);
         Assert.Equal(HttpStatusCode.Forbidden, second.StatusCode);
     }
 }
@@ -33,9 +33,9 @@ public sealed class AuthTests(DefaultApi fixture) : IClassFixture<DefaultApi>
     {
         PostgresDatabase.SkipIfUnavailable();
         var email = ApiSession.NewEmail();
-        await ApiSession.RegisterAsync(fixture.Api, email, "Senha-forte-123");
+        await ApiSession.RegisterAsync(fixture.Api, email, ApiSession.DefaultPassword);
 
-        var session = await ApiSession.LoginAsync(fixture.Api, $"  {email.ToUpperInvariant()} ", "Senha-forte-123");
+        var session = await ApiSession.LoginAsync(fixture.Api, $"  {email.ToUpperInvariant()} ", ApiSession.DefaultPassword);
 
         Assert.Equal(email, session.User.Email);
     }
@@ -46,7 +46,7 @@ public sealed class AuthTests(DefaultApi fixture) : IClassFixture<DefaultApi>
         PostgresDatabase.SkipIfUnavailable();
         var email = ApiSession.NewEmail();
         await ApiSession.RegisterAsync(fixture.Api, email);
-        var anonymous = fixture.Api.CreateClient();
+        var anonymous = ApiSession.Anonymous(fixture.Api);
 
         var wrongPassword = await anonymous.PostAsJsonAsync("/api/auth/login", new { email, password = "Senha-errada-123" }, Ct);
         var unknownEmail = await anonymous.PostAsJsonAsync("/api/auth/login",
@@ -63,21 +63,21 @@ public sealed class AuthTests(DefaultApi fixture) : IClassFixture<DefaultApi>
         var email = ApiSession.NewEmail();
         await ApiSession.RegisterAsync(fixture.Api, email);
 
-        var duplicate = await fixture.Api.CreateClient().PostAsJsonAsync("/api/auth/register",
-            new { name = "Outra conta", email, password = "Senha-forte-123" }, Ct);
+        var duplicate = await ApiSession.Anonymous(fixture.Api).PostAsJsonAsync("/api/auth/register",
+            new { name = "Outra conta", email, password = ApiSession.DefaultPassword }, Ct);
 
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
     }
 
     [Theory]
-    [InlineData("A", "valido@example.test", "Senha-forte-123")]
-    [InlineData("Nome válido", "sem-arroba", "Senha-forte-123")]
+    [InlineData("A", "valido@example.test", ApiSession.DefaultPassword)]
+    [InlineData("Nome válido", "sem-arroba", ApiSession.DefaultPassword)]
     [InlineData("Nome válido", "valido@example.test", "curta")]
     public async Task Invalid_registration_data_is_rejected(string name, string email, string password)
     {
         PostgresDatabase.SkipIfUnavailable();
 
-        var response = await fixture.Api.CreateClient().PostAsJsonAsync("/api/auth/register", new { name, email, password }, Ct);
+        var response = await ApiSession.Anonymous(fixture.Api).PostAsJsonAsync("/api/auth/register", new { name, email, password }, Ct);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -89,7 +89,7 @@ public sealed class AuthTests(DefaultApi fixture) : IClassFixture<DefaultApi>
     {
         PostgresDatabase.SkipIfUnavailable();
 
-        var response = await fixture.Api.CreateClient().GetAsync(path, Ct);
+        var response = await ApiSession.Anonymous(fixture.Api).GetAsync(path, Ct);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }

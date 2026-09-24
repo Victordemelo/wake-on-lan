@@ -24,9 +24,9 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ConnectionStrings__Database: Host=database;Port=5432;Database=${POSTGRES_DB:-remotewake};Username=${POSTGRES_USER:-remotewake};Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      Jwt__Key: ${JWT_KEY:?Set JWT_KEY in .env}
-      Jwt__Issuer: ${JWT_ISSUER:-RemoteWake}
-      Jwt__Audience: ${JWT_AUDIENCE:-RemoteWake.Web}
+      # Optional: fixed code for creating the first account. Without it, the API
+      # prints a new code in its log while no account exists.
+      Setup__Token: ${SETUP_TOKEN:-}
       Gateway__Key: ${GATEWAY_KEY:-}
       Gateway__OwnerEmail: ${GATEWAY_OWNER_EMAIL:-}
       Agent__MasterKey: ${AGENT_MASTER_KEY:-}

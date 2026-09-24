@@ -15,5 +15,4 @@ RUN apk add --no-cache krb5-libs \
 COPY --from=build /app .
 USER remotewake
 EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
 ENTRYPOINT ["dotnet", "RemoteWake.Api.dll"]
