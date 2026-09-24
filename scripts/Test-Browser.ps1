@@ -54,9 +54,10 @@ try {
     Write-Host 'All browser tests passed.'
 }
 finally {
-    if ($KeepRunning) { Write-Host "Instance kept running: docker $($compose -join ' ') down --volumes" }
+    if ($KeepRunning) { Write-Host "Instance kept running: docker $($compose -join ' ') down --volumes --rmi local" }
     else {
-        & docker @($compose + @('down', '--volumes', '--remove-orphans')) *> $null
+        # --rmi local also removes the images built for this run, which has its own project name.
+        & docker @($compose + @('down', '--volumes', '--remove-orphans', '--rmi', 'local')) *> $null
         Remove-Item -LiteralPath $envFile -ErrorAction SilentlyContinue
     }
 }
