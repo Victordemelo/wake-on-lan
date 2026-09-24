@@ -29,7 +29,10 @@ Get-Service RemoteWakeAgent
 O instalador recusa sobrepor serviços/diretórios existentes. Ele copia o binário
 e a configuração para `C:\Program Files\RemoteWake\agent` (ou `gateway`),
 restringe escrita a Administradores/SYSTEM e inicia o serviço automaticamente.
-O gateway usa LocalService; o agente usa SYSTEM para agendar desligamentos.
+O gateway usa LocalService; o agente usa SYSTEM para agendar desligamentos,
+suspensões e hibernações. Se o processo falhar, o Windows o reinicia após 10 s,
+30 s e depois a cada 60 s; uma parada por configuração inválida ou chave revogada
+não é repetida, pois exige nova configuração.
 Proteja ou remova a cópia original da configuração depois de instalar.
 Não afrouxe a política de execução da organização para executar este script.
 

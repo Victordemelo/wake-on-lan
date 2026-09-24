@@ -1,6 +1,6 @@
 # Ligar, desligar e reiniciar fora de casa
 
-Esta versão usa dois processos locais. O **gateway** fica ligado na residência e envia o Magic Packet pela LAN. O **agente** roda no próprio PC e aceita apenas `shutdown` e `restart`. Ambos fazem conexões HTTP de saída para a API; não abra portas de entrada no PC.
+Esta versão usa dois processos locais. O **gateway** fica ligado na residência e envia o Magic Packet pela LAN. O **agente** roda no próprio PC e aceita apenas `shutdown`, `restart`, `suspend` e `hibernate`. Ambos fazem conexões HTTP de saída para a API; não abra portas de entrada no PC.
 
 ```text
 Celular/PWA → API acessível por HTTPS ou Tailscale
@@ -59,7 +59,15 @@ $env:REMOTE_WAKE_ALLOWED_BROADCASTS='192.168.1.255' # troque pelo broadcast da s
 dotnet run --project src/worker/RemoteWake.Worker.csproj
 ```
 
-Isso exige o SDK .NET 10. Quando o teste funcionar, mantenha o worker ativo como serviço no equipamento que não será desligado.
+Isso exige o SDK .NET 10. Sem o SDK, publique um executável independente em qualquer máquina com Docker e copie-o para o Windows:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0-alpine dotnet publish src/worker/RemoteWake.Worker.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish/windows
+```
+
+Execute `RemoteWake.Worker.exe --settings gateway.json` **a partir de uma pasta do disco do Windows** (por exemplo `C:\RemoteWake`); iniciado de dentro do WSL (`\\wsl.localhost\...`), o executável não chega a se conectar. O `gateway.json` segue o formato de `deploy/worker.example.json` com `REMOTE_WAKE_MODE` igual a `gateway`.
+
+Quando o teste funcionar, mantenha o worker ativo como serviço no equipamento que não será desligado.
 
 ## 3. Agente no PC controlado
 
@@ -92,17 +100,28 @@ dotnet run --project src/worker/RemoteWake.Worker.csproj
 
 Clique em **Reiniciar** no painel: a resposta deve indicar **Simulação** e o PC deve continuar ligado.
 
-No Windows, instale o executável publicado como Windows Service com uma conta autorizada a desligar a máquina. As variáveis do agente precisam estar disponíveis ao processo do serviço. No Linux, execute o worker via systemd com um `EnvironmentFile` protegido (`chmod 600`) e uma conta autorizada a executar `shutdown`. O processo usa os comandos nativos do sistema: Windows `shutdown.exe /s|/r /t 30`; Linux `shutdown -h|-r +1`.
+Com o agente instalado, o histórico também confirma quando a máquina realmente liga: se o agente se conecta em até 10 minutos depois de um Ligar bem-sucedido, aparece a linha **Ligou** com o tempo que a máquina levou para iniciar.
 
-O painel libera **Desligar** e **Reiniciar** quando o agente aparece online. Há uma confirmação antes de cada ação. O agente não executa shell arbitrário nem scripts enviados pela API.
+No Windows, instale o executável publicado como Windows Service com uma conta autorizada a desligar a máquina. As variáveis do agente precisam estar disponíveis ao processo do serviço. No Linux, execute o worker via systemd com um `EnvironmentFile` protegido (`chmod 600`) e uma conta autorizada a executar `shutdown` e `systemctl`. O processo usa os comandos nativos do sistema:
+
+| Ação | Windows | Linux |
+|---|---|---|
+| Desligar | `shutdown.exe /s /t 30` | `shutdown -h +1` |
+| Reiniciar | `shutdown.exe /r /t 30` | `shutdown -r +1` |
+| Suspender | `SetSuspendState` (.NET, via PowerShell) | `systemctl suspend` |
+| Hibernar | `shutdown.exe /h` | `systemctl hibernate` |
+
+Suspender e hibernar agem imediatamente, por isso o agente responde à API e só executa a ação 5 segundos depois. A hibernação precisa estar habilitada no sistema (`powercfg /hibernate on` no Windows; swap configurada no Linux). Para acordar a máquina depois, use **Ligar**: a placa de rede precisa ter o Wake-on-LAN ativo também na suspensão/hibernação.
+
+O painel libera **Desligar**, **Reiniciar**, **Suspender** e **Hibernar** quando o agente aparece online. Há uma confirmação antes de cada ação. O agente não executa shell arbitrário nem scripts enviados pela API.
 
 ## Limites desta versão
 
 Para execução automática, siga o [guia de instalação como serviço](SERVICE_INSTALL.md), com script Windows e unidade systemd. A instalação real precisa ser validada no equipamento de destino.
 
 - Os pedidos em andamento ficam na memória da API. Um reinício da API cancela esses pedidos; não há fila persistente.
-- O resultado de Ligar confirma o envio do pacote, não que o PC efetivamente iniciou. Teste BIOS/UEFI, placa Ethernet e energia em suspensão/desligamento.
+- O resultado de Ligar confirma o envio do pacote. A confirmação de que o PC iniciou depende do agente instalado e conectado em até 10 minutos. Teste BIOS/UEFI, placa Ethernet e energia em suspensão/desligamento.
 - O status online considera o contato do worker nos últimos 35 segundos, não uma inspeção direta do sistema operacional.
-- O painel mostra as últimas 100 tentativas de wake, desligamento e reinício. Confirmação significa envio/agendamento aceito, não inspeção do estado físico. Remover uma máquina também remove seu histórico.
+- O painel mostra as últimas 100 ações e confirmações, com o IP de origem registrado. Confirmação de uma ação significa envio/agendamento aceito, não inspeção do estado físico. Remover uma máquina mantém seu histórico com o nome que ela tinha.
 - O pareamento do gateway usa chave configurada manualmente. Códigos temporários e múltiplos gateways ficam para a próxima fase. A chave de cada agente já pode ser revogada no painel.
 - Comandos expiram em 20 segundos e não são reexecutados automaticamente. Se faltar confirmação, confira o estado do PC antes de repetir.
