@@ -43,8 +43,8 @@ public static class AuthEndpoints
         await RegistrationGate.WaitAsync();
         try
         {
-            if (await database.Users.AnyAsync(user => user.Email == email))
-                return Results.Conflict(new { message = "Este e-mail já está cadastrado." });
+            // Permission first: with registration closed, the answer must not reveal
+            // whether an e-mail already has an account.
             var firstUser = !await database.Users.AnyAsync();
             if (firstUser && !setup.Matches(request.SetupToken))
                 return Results.Json(new { message = "Código de configuração inválido. Ele aparece nos logs da API: docker compose logs api." },
@@ -52,6 +52,8 @@ public static class AuthEndpoints
             if (!firstUser && !configuration.GetValue<bool>("Registration:Open"))
                 return Results.Json(new { message = "O cadastro está fechado. O administrador pode criar sua conta." },
                     statusCode: StatusCodes.Status403Forbidden);
+            if (await database.Users.AnyAsync(user => user.Email == email))
+                return Results.Conflict(new { message = "Este e-mail já está cadastrado." });
 
             var user = new User { Name = name, Email = email, PasswordHash = string.Empty, CreatedAt = time.GetUtcNow() };
             user.PasswordHash = hasher.HashPassword(user, request.Password!);
@@ -68,7 +70,8 @@ public static class AuthEndpoints
     }
 
     private static async Task<IResult> LoginAsync(LoginRequest request, HttpContext context, AppDbContext database,
-        IPasswordHasher<User> hasher, SessionService sessions, SecurityLog log, TimeProvider time)
+        IPasswordHasher<User> hasher, SessionService sessions, SecurityLog log, TimeProvider time,
+        FailedLoginRecorder failedLogins, AccountLocks locks)
     {
         var email = AccountRules.NormalizeEmail(request.Email);
         if (email.Length == 0 || string.IsNullOrEmpty(request.Password) || request.Password.Length > AccountRules.MaxPasswordLength)
@@ -84,8 +87,8 @@ public static class AuthEndpoints
         var verification = hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         if (verification == PasswordVerificationResult.Failed)
         {
-            log.Add(user.Id, SecurityEventTypes.LoginFailed, context);
-            await database.SaveChangesAsync();
+            // Recorded in the background, so this path costs the same as an unknown e-mail.
+            failedLogins.Enqueue(user.Id, context);
             return InvalidCredentials();
         }
         if (verification == PasswordVerificationResult.SuccessRehashNeeded)
@@ -94,6 +97,7 @@ public static class AuthEndpoints
         if (user.TotpSecret is not null)
         {
             // The attacker already knows the password here, so limiting per account is safe.
+            using var accountLock = await locks.AcquireAsync(user.Id, context.RequestAborted);
             var since = time.GetUtcNow().AddMinutes(-15);
             var failures = await database.SecurityEvents.CountAsync(item =>
                 item.UserId == user.Id && item.Type == SecurityEventTypes.TwoFactorFailed && item.CreatedAt > since);

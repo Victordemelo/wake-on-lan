@@ -30,24 +30,26 @@ public static class AccountRules
 
 public static class TwoFactor
 {
-    // Accepts a code from the authenticator app or an unused recovery code.
-    // The caller saves the changes (last TOTP step or used recovery code).
+    // Accepts a code from the authenticator app or an unused recovery code. Both are
+    // claimed with conditional updates, so two concurrent requests cannot use the same code.
     public static async Task<bool> TryConsumeAsync(User user, string? code, AppDbContext database,
         SecurityLog log, HttpContext? context, TimeProvider time)
     {
         if (user.TotpSecret is null || string.IsNullOrWhiteSpace(code)) return false;
         if (Totp.TryVerify(user.TotpSecret, code, time.GetUtcNow(), user.TotpLastStep, out var step))
         {
-            user.TotpLastStep = step;
-            return true;
+            var claimed = await database.Users
+                .Where(item => item.Id == user.Id && (item.TotpLastStep == null || item.TotpLastStep < step))
+                .ExecuteUpdateAsync(update => update.SetProperty(item => item.TotpLastStep, step));
+            return claimed == 1;
         }
 
         if (!RecoveryCodes.LooksLikeRecoveryCode(code)) return false;
         var hash = RecoveryCodes.Hash(code);
-        var recovery = await database.RecoveryCodes
-            .SingleOrDefaultAsync(item => item.UserId == user.Id && item.CodeHash == hash && item.UsedAt == null);
-        if (recovery is null) return false;
-        recovery.UsedAt = time.GetUtcNow();
+        var used = await database.RecoveryCodes
+            .Where(item => item.UserId == user.Id && item.CodeHash == hash && item.UsedAt == null)
+            .ExecuteUpdateAsync(update => update.SetProperty(item => item.UsedAt, time.GetUtcNow()));
+        if (used == 0) return false;
         log.Add(user.Id, SecurityEventTypes.RecoveryCodeUsed, context);
         return true;
     }
@@ -69,8 +71,6 @@ public static class TwoFactor
         await RemoveRecoveryCodesAsync(user, database);
     }
 
-    // Through the change tracker (not ExecuteDelete): a recovery code consumed in the same
-    // request is already tracked as modified and must be deleted in the same SaveChanges.
     private static async Task RemoveRecoveryCodesAsync(User user, AppDbContext database) =>
         database.RecoveryCodes.RemoveRange(await database.RecoveryCodes.Where(item => item.UserId == user.Id).ToListAsync());
 }

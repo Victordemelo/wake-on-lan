@@ -28,6 +28,9 @@ builder.Services.AddSingleton(new LoginSessionOptions
 });
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddScoped<SecurityLog>();
+builder.Services.AddSingleton<AccountLocks>();
+builder.Services.AddSingleton<FailedLoginRecorder>();
+builder.Services.AddHostedService(services => services.GetRequiredService<FailedLoginRecorder>());
 
 builder.Services.AddRateLimiter(options =>
 {

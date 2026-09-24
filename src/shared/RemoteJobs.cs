@@ -41,7 +41,7 @@ public static class PowerCommand
         (RemoteActions.Restart, true) => ("shutdown.exe", ["/r", "/t", "30"]),
         // "rundll32 powrprof.dll,SetSuspendState" hibernates when hibernation is enabled; .NET suspends.
         (RemoteActions.Suspend, true) => ("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"]),
+            "Add-Type -AssemblyName System.Windows.Forms; if (-not [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)) { exit 1 }"]),
         (RemoteActions.Hibernate, true) => ("shutdown.exe", ["/h"]),
         (RemoteActions.Shutdown, false) => ("shutdown", ["-h", "+1"]),
         (RemoteActions.Restart, false) => ("shutdown", ["-r", "+1"]),

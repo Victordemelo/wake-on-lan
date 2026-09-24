@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react'
 import { Copy, Download, History, KeyRound, MonitorSmartphone, ShieldAlert, ShieldCheck, X } from 'lucide-react'
-import { api, SecurityEvent, SessionInfo, TwoFactorSetup, User } from '../api'
+import { api, SecurityOverview, SessionInfo, TwoFactorSetup, User } from '../api'
 import { describeAgent, formatDate } from '../format'
 
 type Tab = 'password' | 'two-factor' | 'sessions' | 'events'
@@ -128,9 +128,9 @@ function TwoFactorTab({ user, onUserChange }: { user: User; onUserChange: (user:
 
   const enable = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const code = String(new FormData(event.currentTarget).get('code'))
+    const data = new FormData(event.currentTarget)
     return run(async () => {
-      const result = await api.enableTwoFactor(code)
+      const result = await api.enableTwoFactor(String(data.get('password')), String(data.get('code')))
       setSetup(null)
       setQrCode('')
       setRecoveryCodes(result.recoveryCodes)
@@ -173,6 +173,7 @@ function TwoFactorTab({ user, onUserChange }: { user: User; onUserChange: (user:
         <label>2. Código de 6 dígitos mostrado no aplicativo
           <input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" maxLength={7} required placeholder="123456" />
         </label>
+        <label>3. Sua senha, para confirmar<input name="password" type="password" autoComplete="current-password" required /></label>
         <StatusMessage status={status} />
         <div className="account-actions">
           <button type="button" className="button secondary" onClick={() => { setSetup(null); setQrCode('') }}>Cancelar</button>
@@ -327,13 +328,13 @@ const eventLabels: Record<string, { label: string; alert?: boolean }> = {
 }
 
 function EventsTab() {
-  const [events, setEvents] = useState<SecurityEvent[] | null>(null)
+  const [overview, setOverview] = useState<SecurityOverview | null>(null)
   const [status, setStatus] = useState<Status>(null)
 
   useEffect(() => {
     let active = true
-    api.securityEvents().then(
-      (items) => { if (active) setEvents(items) },
+    api.securityOverview().then(
+      (result) => { if (active) setOverview(result) },
       (error) => { if (active) setStatus(failure(error, 'Não foi possível carregar a atividade.')) },
     )
     return () => { active = false }
@@ -341,23 +342,38 @@ function EventsTab() {
 
   return (
     <>
-      <p className="account-hint">Últimos 30 eventos de segurança da sua conta. Se não reconhecer algum, troque a senha e ative as duas etapas.</p>
+      <p className="account-hint">Eventos de segurança da sua conta. Se não reconhecer algum, troque a senha e ative as duas etapas.</p>
       <StatusMessage status={status} />
-      {events === null ? <p className="account-hint">Carregando...</p> : events.length === 0 ? <p className="account-hint">Nenhum evento registrado.</p> : (
-        <div className="activity-list event-list">
-          {events.map((item) => {
-            const meta = eventLabels[item.type] ?? { label: item.type }
-            return (
-              <article key={item.id} className="activity-row">
-                <div>
-                  <strong className={meta.alert ? 'activity-failure' : undefined}>{meta.label}</strong>
-                  <p>{describeAgent(item.userAgent)}{item.ipAddress ? ` · ${item.ipAddress}` : ''}</p>
-                </div>
-                <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
-              </article>
-            )
-          })}
-        </div>
+      {overview === null ? <p className="account-hint">Carregando...</p> : (
+        <>
+          {overview.failedCodes > 0 && (
+            <div className="error" role="alert">
+              {overview.failedCodes === 1 ? '1 código de verificação incorreto' : `${overview.failedCodes} códigos de verificação incorretos`} nos últimos 30 dias
+              {overview.lastFailedCode && ` (último em ${formatDate(overview.lastFailedCode)})`}. Quem erra o código já acertou sua senha: troque-a.
+            </div>
+          )}
+          <p className="account-hint">
+            {overview.failedPasswords === 0 ? 'Nenhuma tentativa com senha incorreta nos últimos 30 dias.'
+              : `${overview.failedPasswords === 1 ? '1 tentativa' : `${overview.failedPasswords} tentativas`} com senha incorreta nos últimos 30 dias`
+                + (overview.lastFailedPassword ? ` (última em ${formatDate(overview.lastFailedPassword)}).` : '.')}
+          </p>
+          {overview.events.length === 0 ? <p className="account-hint">Nenhum evento registrado.</p> : (
+            <div className="activity-list event-list">
+              {overview.events.map((item) => {
+                const meta = eventLabels[item.type] ?? { label: item.type }
+                return (
+                  <article key={item.id} className="activity-row">
+                    <div>
+                      <strong className={meta.alert ? 'activity-failure' : undefined}>{meta.label}</strong>
+                      <p>{describeAgent(item.userAgent)}{item.ipAddress ? ` · ${item.ipAddress}` : ''}</p>
+                    </div>
+                    <time dateTime={item.createdAt}>{formatDate(item.createdAt)}</time>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
     </>
   )

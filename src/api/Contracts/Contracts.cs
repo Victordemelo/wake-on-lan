@@ -14,8 +14,12 @@ public sealed record PasswordConfirmation(string? Password);
 public sealed record SessionResponse(Guid Id, DateTimeOffset CreatedAt, DateTimeOffset LastSeenAt,
     string? IpAddress, string? UserAgent, bool Current);
 public sealed record SecurityEventResponse(Guid Id, string Type, DateTimeOffset CreatedAt, string? IpAddress, string? UserAgent);
+// Failures are summarized apart from the event list, so a flood of wrong passwords
+// cannot push important events (a login, 2FA disabled) out of view.
+public sealed record SecurityOverview(IReadOnlyList<SecurityEventResponse> Events,
+    int FailedPasswords, DateTimeOffset? LastFailedPassword, int FailedCodes, DateTimeOffset? LastFailedCode);
 public sealed record TwoFactorSetupResponse(string Secret, string Uri);
-public sealed record TwoFactorCodeRequest(string? Code);
+public sealed record TwoFactorEnableRequest(string? Password, string? Code);
 public sealed record TwoFactorDisableRequest(string? Password, string? Code);
 public sealed record RecoveryCodesResponse(IReadOnlyList<string> RecoveryCodes);
 

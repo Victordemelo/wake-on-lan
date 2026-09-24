@@ -15,12 +15,17 @@ public sealed class RegistrationTests(ClosedRegistrationApi fixture) : IClassFix
         var anonymous = ApiSession.Anonymous(fixture.Api);
         Assert.Equal(new RegistrationStatus(true, true), await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct));
 
-        await ApiSession.RegisterAsync(fixture.Api);
+        var owner = ApiSession.NewEmail();
+        await ApiSession.RegisterAsync(fixture.Api, owner);
 
         Assert.Equal(new RegistrationStatus(false, false), await anonymous.GetFromJsonAsync<RegistrationStatus>("/api/auth/registration", ct));
         var second = await anonymous.PostAsJsonAsync("/api/auth/register",
             new { name = "Outra pessoa", email = ApiSession.NewEmail(), password = ApiSession.DefaultPassword }, ct);
         Assert.Equal(HttpStatusCode.Forbidden, second.StatusCode);
+        // An existing e-mail gets the same answer, so a closed instance does not reveal its accounts.
+        var existing = await anonymous.PostAsJsonAsync("/api/auth/register",
+            new { name = "Outra pessoa", email = owner, password = ApiSession.DefaultPassword }, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, existing.StatusCode);
     }
 }
 

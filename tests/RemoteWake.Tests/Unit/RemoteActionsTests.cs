@@ -52,6 +52,7 @@ public sealed class RemoteActionsTests
 
         Assert.Equal("powershell.exe", command.FileName);
         Assert.Contains("SetSuspendState('Suspend'", command.Arguments[^1]);
+        Assert.Contains("exit 1", command.Arguments[^1]);
     }
 
     [Fact]

@@ -28,9 +28,13 @@ public sealed class TwoFactorTests(DefaultApi fixture) : IClassFixture<DefaultAp
         var setup = await (await session.Http.PostAsync("/api/account/two-factor/setup", null, Ct))
             .Content.ReadFromJsonAsync<TwoFactorSetupResponse>(ApiSession.Json, Ct);
         Assert.StartsWith("otpauth://totp/Remote%20Wake:", setup!.Uri);
-        var wrong = await session.Http.PostAsJsonAsync("/api/account/two-factor/enable", new { code = "000000" }, Ct);
+        var wrong = await session.Http.PostAsJsonAsync("/api/account/two-factor/enable",
+            new { password = ApiSession.DefaultPassword, code = "000000" }, Ct);
         Assert.Equal(HttpStatusCode.BadRequest, wrong.StatusCode);
-        var enabled = await session.Http.PostAsJsonAsync("/api/account/two-factor/enable", new { code = CodeFor(setup.Secret) }, Ct);
+        var withoutPassword = await session.Http.PostAsJsonAsync("/api/account/two-factor/enable", new { code = CodeFor(setup.Secret) }, Ct);
+        Assert.Equal(HttpStatusCode.BadRequest, withoutPassword.StatusCode);
+        var enabled = await session.Http.PostAsJsonAsync("/api/account/two-factor/enable",
+            new { password = ApiSession.DefaultPassword, code = CodeFor(setup.Secret) }, Ct);
         var recoveryCodes = (await enabled.Content.ReadFromJsonAsync<RecoveryCodesResponse>(ApiSession.Json, Ct))!.RecoveryCodes;
         Assert.Equal(10, recoveryCodes.Count);
         Assert.All(recoveryCodes, code => Assert.Matches("^[a-z2-7]{4}(-[a-z2-7]{4}){3}$", code));
@@ -47,6 +51,10 @@ public sealed class TwoFactorTests(DefaultApi fixture) : IClassFixture<DefaultAp
 
         (await LoginAsync(email, recoveryCodes[0].ToUpperInvariant())).EnsureSuccessStatusCode();
         Assert.Equal(HttpStatusCode.Unauthorized, (await LoginAsync(email, recoveryCodes[0])).StatusCode);
+
+        // Parallel logins with the same recovery code: exactly one wins.
+        var parallel = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ => LoginAsync(email, recoveryCodes[2])));
+        Assert.Single(parallel, response => response.IsSuccessStatusCode);
 
         var disableWithoutPassword = await session.Http.PostAsJsonAsync("/api/account/two-factor/disable",
             new { password = "Senha-errada-123", code = recoveryCodes[1] }, Ct);

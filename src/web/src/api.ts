@@ -20,6 +20,13 @@ export type MachineInput = Omit<Machine, 'id' | 'createdAt' | 'lastWakeRequested
 export type ActivityItem = { id: string; machineId?: string; machineName: string; action: string; succeeded: boolean; message: string; requestedAt: string }
 export type SessionInfo = { id: string; createdAt: string; lastSeenAt: string; ipAddress?: string; userAgent?: string; current: boolean }
 export type SecurityEvent = { id: string; type: string; createdAt: string; ipAddress?: string; userAgent?: string }
+export type SecurityOverview = {
+  events: SecurityEvent[]
+  failedPasswords: number
+  lastFailedPassword?: string
+  failedCodes: number
+  lastFailedCode?: string
+}
 export type TwoFactorSetup = { secret: string; uri: string }
 
 export class ApiError extends Error {
@@ -65,9 +72,9 @@ export const api = {
   sessions: () => request<SessionInfo[]>('/api/account/sessions'),
   revokeSession: (id: string) => request<void>(`/api/account/sessions/${id}`, { method: 'DELETE' }),
   revokeOtherSessions: () => post<{ revokedSessions: number }>('/api/account/sessions/revoke-others'),
-  securityEvents: () => request<SecurityEvent[]>('/api/account/events'),
+  securityOverview: () => request<SecurityOverview>('/api/account/events'),
   startTwoFactor: () => post<TwoFactorSetup>('/api/account/two-factor/setup'),
-  enableTwoFactor: (code: string) => post<{ recoveryCodes: string[] }>('/api/account/two-factor/enable', { code }),
+  enableTwoFactor: (password: string, code: string) => post<{ recoveryCodes: string[] }>('/api/account/two-factor/enable', { password, code }),
   disableTwoFactor: (password: string, code: string) => post<void>('/api/account/two-factor/disable', { password, code }),
   regenerateRecoveryCodes: (password: string) => post<{ recoveryCodes: string[] }>('/api/account/two-factor/recovery-codes', { password }),
 

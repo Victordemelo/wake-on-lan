@@ -27,8 +27,11 @@ public sealed record LoginSessionOptions
 
     public bool IsSecure(HttpContext context) => AlwaysSecure || context.Request.IsHttps;
 
-    public static string? ReadToken(HttpRequest request) =>
-        request.Cookies[SecureCookieName] ?? request.Cookies[PlainCookieName];
+    // Over HTTPS only the __Host- cookie counts: a sibling subdomain could plant a plain
+    // cookie for the parent domain and sign the victim into the attacker's account.
+    public string? ReadToken(HttpContext context) => IsSecure(context)
+        ? context.Request.Cookies[SecureCookieName]
+        : context.Request.Cookies[PlainCookieName];
 }
 
 public static class SessionTokens
@@ -139,7 +142,7 @@ public sealed class SessionAuthenticationHandler(
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        var token = LoginSessionOptions.ReadToken(Request);
+        var token = options.ReadToken(Context);
         if (string.IsNullOrEmpty(token) || token.Length > 128) return AuthenticateResult.NoResult();
 
         var hash = SessionTokens.Hash(token);

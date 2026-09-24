@@ -83,14 +83,21 @@ public static class AccountEndpoints
         return Results.Ok(new { revokedSessions = revoked });
     }
 
-    private static async Task<IResult> ListSecurityEventsAsync(ClaimsPrincipal principal, AppDbContext database)
+    private static async Task<IResult> ListSecurityEventsAsync(ClaimsPrincipal principal, AppDbContext database, TimeProvider time)
     {
         var userId = principal.UserId();
-        return Results.Ok(await database.SecurityEvents.AsNoTracking()
-            .Where(item => item.UserId == userId)
+        var mine = database.SecurityEvents.AsNoTracking().Where(item => item.UserId == userId);
+        var events = await mine
+            .Where(item => item.Type != SecurityEventTypes.LoginFailed && item.Type != SecurityEventTypes.TwoFactorFailed)
             .OrderByDescending(item => item.CreatedAt).Take(30)
             .Select(item => new SecurityEventResponse(item.Id, item.Type, item.CreatedAt, item.IpAddress, item.UserAgent))
-            .ToListAsync());
+            .ToListAsync();
+        var since = time.GetUtcNow().AddDays(-30);
+        var passwords = mine.Where(item => item.Type == SecurityEventTypes.LoginFailed && item.CreatedAt > since);
+        var codes = mine.Where(item => item.Type == SecurityEventTypes.TwoFactorFailed && item.CreatedAt > since);
+        return Results.Ok(new SecurityOverview(events,
+            await passwords.CountAsync(), await passwords.MaxAsync(item => (DateTimeOffset?)item.CreatedAt),
+            await codes.CountAsync(), await codes.MaxAsync(item => (DateTimeOffset?)item.CreatedAt)));
     }
 
     private static async Task<IResult> StartTwoFactorSetupAsync(ClaimsPrincipal principal, AppDbContext database)
@@ -103,12 +110,16 @@ public static class AccountEndpoints
         return Results.Ok(new TwoFactorSetupResponse(readable, Totp.ProvisioningUri(user.PendingTotpSecret, user.Email)));
     }
 
-    private static async Task<IResult> EnableTwoFactorAsync(TwoFactorCodeRequest request, ClaimsPrincipal principal,
-        HttpContext context, AppDbContext database, SecurityLog log, TimeProvider time)
+    private static async Task<IResult> EnableTwoFactorAsync(TwoFactorEnableRequest request, ClaimsPrincipal principal,
+        HttpContext context, AppDbContext database, IPasswordHasher<User> hasher, SecurityLog log, TimeProvider time)
     {
         var user = await database.Users.SingleAsync(item => item.Id == principal.UserId());
         if (user.TotpSecret is not null) return Error("A verificação em duas etapas já está ativa.");
         if (user.PendingTotpSecret is null) return Error("Gere um novo código QR antes de ativar.");
+        // Without the password, a stolen session could lock the owner out with an attacker's authenticator.
+        if (string.IsNullOrEmpty(request.Password)
+            || hasher.VerifyHashedPassword(user, user.PasswordHash, request.Password) == PasswordVerificationResult.Failed)
+            return Error("Senha incorreta.");
         if (!Totp.TryVerify(user.PendingTotpSecret, request.Code, time.GetUtcNow(), null, out var step))
             return Error("Código inválido. Confira se o horário do celular está correto e tente de novo.");
 

@@ -6,8 +6,6 @@ using RemoteWake.Api.Services;
 
 namespace RemoteWake.Tests.Api;
 
-internal sealed record SecurityEventItem(Guid Id, string Type, DateTimeOffset CreatedAt, string? IpAddress, string? UserAgent);
-
 public sealed class SessionTests(DefaultApi fixture) : IClassFixture<DefaultApi>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -124,10 +122,42 @@ public sealed class SessionTests(DefaultApi fixture) : IClassFixture<DefaultApi>
         await ApiSession.Anonymous(fixture.Api).PostAsJsonAsync("/api/auth/login", new { email, password = "Senha-errada-123" }, Ct);
         await ApiSession.LoginAsync(fixture.Api, email, ApiSession.DefaultPassword);
 
-        var events = await session.GetAsync<List<SecurityEventItem>>("/api/account/events");
+        // Wrong passwords are recorded in the background.
+        SecurityOverview overview = null!;
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            overview = await session.GetAsync<SecurityOverview>("/api/account/events");
+            if (overview.FailedPasswords == 1) break;
+            await Task.Delay(100, Ct);
+        }
 
-        Assert.Equal(["login_succeeded", "login_failed", "registered"], events.Select(item => item.Type));
-        Assert.All(events, item => Assert.Equal("198.51.100.1", item.IpAddress));
+        Assert.Equal(1, overview.FailedPasswords);
+        Assert.NotNull(overview.LastFailedPassword);
+        Assert.Equal(["login_succeeded", "registered"], overview.Events.Select(item => item.Type));
+        Assert.All(overview.Events, item => Assert.Equal("198.51.100.1", item.IpAddress));
+    }
+
+    [Fact]
+    public async Task Over_https_only_the_host_only_cookie_is_accepted()
+    {
+        PostgresDatabase.SkipIfUnavailable();
+        var email = ApiSession.NewEmail();
+        await ApiSession.RegisterAsync(fixture.Api, email);
+        var login = await ApiSession.Anonymous(fixture.Api)
+            .PostAsJsonAsync("/api/auth/login", new { email, password = ApiSession.DefaultPassword }, Ct);
+        var plainCookie = login.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+
+        async Task<HttpStatusCode> MeAsync(bool https)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+            request.Headers.Add("Cookie", plainCookie);
+            request.Headers.Add(TestPeerStartupFilter.Header, "172.18.0.2");
+            if (https) request.Headers.Add("X-Forwarded-Proto", "https");
+            return (await fixture.Api.CreateClient().SendAsync(request, Ct)).StatusCode;
+        }
+
+        Assert.Equal(HttpStatusCode.OK, await MeAsync(https: false));
+        Assert.Equal(HttpStatusCode.Unauthorized, await MeAsync(https: true));
     }
 }
 
