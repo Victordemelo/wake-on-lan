@@ -1,0 +1,36 @@
+# Produção com HTTPS (Caddy + Let's Encrypt). Uso, a partir da raiz do projeto:
+#
+#   docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+#
+# Defina DOMAIN no .env e aponte o DNS dele para este servidor (portas 80 e 443
+# abertas). Requer Docker Compose 2.24 ou superior. Veja docs/DEPLOY.md.
+services:
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    # Somente o Caddy (rede interna do Compose) alcança a API.
+    ports: !reset []
+
+  web:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_started
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

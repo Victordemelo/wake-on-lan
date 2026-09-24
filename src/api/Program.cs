@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -33,7 +34,15 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddOpenApi();
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks().AddDbContextCheck<AppDbContext>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    // Only proxies inside these networks may report the client IP and scheme.
+    // Keep the API reachable exclusively through them (see compose.yaml).
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:TrustedNetworks").Get<string[]>() ?? [])
+        options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+});
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("Configure Jwt:Key.");
@@ -55,11 +64,6 @@ builder.Services
     });
 builder.Services.AddAuthorization();
 
-var origins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
-    ?? ["http://localhost:3000", "http://localhost:5173"];
-builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
-    policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod()));
-
 var app = builder.Build();
 
 await using (var scope = app.Services.CreateAsyncScope())
@@ -69,7 +73,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await SchemaUpgrades.ApplyAsync(database);
 }
 
-app.UseCors();
+app.UseForwardedHeaders();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
@@ -83,7 +87,8 @@ app.MapHealthChecks("/health");
 
 var auth = app.MapGroup("/api/auth").RequireRateLimiting("auth");
 auth.MapGet("/registration", async (AppDbContext database, IConfiguration configuration) =>
-    Results.Ok(new { open = configuration.GetValue<bool>("Registration:Open") || !await database.Users.AnyAsync() }));
+    Results.Ok(new { open = configuration.GetValue<bool>("Registration:Open") || !await database.Users.AnyAsync() }))
+    .DisableRateLimiting();
 var registrationGate = new SemaphoreSlim(1, 1);
 
 auth.MapPost("/register", async (

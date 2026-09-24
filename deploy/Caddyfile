@@ -1,0 +1,25 @@
+# HTTPS automático para o domínio definido em DOMAIN (compose.prod.yaml).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		-Server
+	}
+
+	# A API recebe as chamadas diretamente do Caddy: há um único proxy entre o
+	# cliente e a API, e o Caddy descarta X-Forwarded-For enviado pelo cliente.
+	@api path /api/* /health
+	handle @api {
+		header Cache-Control "no-store"
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy web:80
+	}
+}
