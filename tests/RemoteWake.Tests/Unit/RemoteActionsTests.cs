@@ -94,3 +94,28 @@ public sealed class GatewayAllowListTests
         Assert.False(GatewayAllowList.Permits(allowed, "::1", 9, out _));
     }
 }
+
+public sealed class WorkerSettingsTests
+{
+    [Theory]
+    [InlineData("http://localhost:8080", "http://localhost:8080/")]
+    [InlineData("http://localhost:8080/", "http://localhost:8080/")]
+    [InlineData(" https://example.com/remotewake ", "https://example.com/remotewake/")]
+    public void Api_url_always_ends_with_a_slash(string value, string expected)
+    {
+        var uri = WorkerSettings.ParseApiUrl(value);
+
+        Assert.Equal(expected, uri!.ToString());
+        Assert.Equal(expected + "api/gateway/poll", new Uri(uri, "api/gateway/poll").ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("localhost:8080")]
+    [InlineData("ftp://example.com/")]
+    public void Invalid_api_urls_are_rejected(string? value)
+    {
+        Assert.Null(WorkerSettings.ParseApiUrl(value));
+    }
+}

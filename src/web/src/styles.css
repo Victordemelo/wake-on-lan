@@ -122,6 +122,8 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .stat-card p { margin: .32rem 0 0; color: #6f8491; font-size: .68rem; }
 .toast { margin: -1.7rem 0 2rem; padding: .8rem 1rem; display: flex; align-items: center; gap: .65rem; color: #bdf4da; border: 1px solid rgba(66, 245, 173, .16); border-radius: 10px; background: rgba(21, 90, 64, .2); font-size: .76rem; }
 .toast button { margin-left: auto; display: grid; place-items: center; color: #7fb29a; border: 0; background: transparent; }
+.toast.error { color: #ffc9ce; border-color: rgba(255, 111, 125, .22); background: rgba(117, 31, 42, .24); }
+.toast.error button { color: #d99aa1; }
 .section-heading { margin-bottom: 1.1rem; display: flex; align-items: end; justify-content: space-between; }
 .section-heading h2 { margin: 0 0 .25rem; font-size: 1.15rem; letter-spacing: -.025em; }
 .section-heading p { margin: 0; color: #687e8a; font-size: .7rem; }
@@ -198,6 +200,12 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .agent-setup .dialog-body code { display: block; padding: .7rem; overflow-wrap: anywhere; color: #bbf4dc; border: 1px solid var(--line); border-radius: 8px; background: #06131b; font-size: .7rem; }
 .agent-setup .dialog-body p code { display: inline; padding: 0; border: 0; background: transparent; }
 .agent-setup .dialog-body a { color: var(--mint); }
+
+/* Offline */
+.offline-screen { min-height: 100vh; padding: 1.5rem; display: grid; grid-template-rows: auto 1fr; background: var(--bg); }
+.offline-card { width: min(460px, 100%); margin: auto; display: grid; justify-items: center; gap: .4rem; text-align: center; }
+.offline-card h1 { margin: .9rem 0 .2rem; font-size: 1.4rem; letter-spacing: -.03em; }
+.offline-card p { margin: 0 0 1.2rem; color: var(--muted); font-size: .82rem; line-height: 1.6; }
 
 /* Account */
 .boot-screen { min-height: 100vh; background: var(--bg); }

@@ -43,8 +43,12 @@ public sealed class WorkerTests(DefaultApi fixture) : IClassFixture<DefaultApi>
         var offline = await session.Http.PostAsync($"/api/machines/{machine.Id}/wake", null, Ct);
         Assert.Equal(HttpStatusCode.BadRequest, offline.StatusCode);
 
+        Assert.Equal(new StatusResponse(true, false), await session.GetAsync<StatusResponse>("/api/status"));
         await gateway.GetAsync("/api/gateway/poll", Ct);
         Assert.True(Assert.Single(await session.GetAsync<List<MachineResponse>>("/api/machines")).GatewayOnline);
+        Assert.Equal(new StatusResponse(true, true), await session.GetAsync<StatusResponse>("/api/status"));
+        var otherAccount = await ApiSession.RegisterAsync(fixture.Api);
+        Assert.Equal(new StatusResponse(false, false), await otherAccount.GetAsync<StatusResponse>("/api/status"));
         var wake = session.Http.PostAsync($"/api/machines/{machine.Id}/wake", null, Ct);
         var job = await ServeOneJobAsync(gateway, "/api/gateway", new RemoteJobResult(true, "Enviado pelo gateway de teste."));
 

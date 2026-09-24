@@ -2,9 +2,9 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
-  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake,
+  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, WifiOff, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake, TriangleAlert,
 } from 'lucide-react'
-import { api, ApiError, ActivityItem, Machine, MachineInput, PowerAction, RegistrationStatus, User, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, GatewayStatus, Machine, MachineInput, PowerAction, RegistrationStatus, User, WakeMethod } from './api'
 import AccountDialog from './components/AccountDialog'
 import ProjectShowcase from './components/ui/ProjectShowcase'
 import { formatDate } from './format'
@@ -34,39 +34,75 @@ function Brand({ compact = false }: { compact?: boolean }) {
   )
 }
 
+type Toast = { text: string; error: boolean }
+
 function App() {
   // undefined while checking the session cookie, null when signed out.
   const [user, setUser] = useState<User | null | undefined>(undefined)
+  const [bootFailed, setBootFailed] = useState(false)
   const [showAccount, setShowAccount] = useState(false)
   const [machines, setMachines] = useState<Machine[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState<Machine | null>(null)
   const [activities, setActivities] = useState<ActivityItem[]>([])
-  const [message, setMessage] = useState('')
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayStatus | null>(null)
+  const [toast, setToast] = useState<Toast | null>(null)
   const [loadingMachines, setLoadingMachines] = useState(true)
   const [serverOnline, setServerOnline] = useState(true)
   const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
 
+  const notify = (text: string) => setToast({ text, error: false })
+  const warn = (text: string) => setToast({ text, error: true })
+
+  // Drops everything that belongs to the account, so the next person on this
+  // device never sees it, even for a moment.
+  const signedOut = useCallback(() => {
+    setShowAccount(false)
+    setEditing(null)
+    setShowForm(false)
+    setAgentSetup(null)
+    setMachines([])
+    setActivities([])
+    setGatewayStatus(null)
+    setToast(null)
+    setLoadingMachines(true)
+    setUser(null)
+  }, [])
+
   const loadMachines = useCallback(async (quiet = false) => {
     try {
-      const [items, history] = await Promise.all([api.machines(), api.activity()])
+      const [items, history, status] = await Promise.all([api.machines(), api.activity(), api.status()])
       setMachines(items)
       setActivities(history)
+      setGatewayStatus(status)
       setServerOnline(true)
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) setUser(null)
-      else {
-        setServerOnline(false)
-        if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
-      }
-    } finally {
       setLoadingMachines(false)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        signedOut()
+        return
+      }
+      setServerOnline(false)
+      setLoadingMachines(false)
+      if (!quiet) setToast({ text: 'Não foi possível atualizar o painel. Tente novamente.', error: true })
     }
+  }, [signedOut])
+
+  const checkSession = useCallback(() => {
+    setBootFailed(false)
+    api.session().then(({ user: current }) => setUser(current), () => setBootFailed(true))
   }, [])
 
   useEffect(() => {
-    api.me().then(setUser, () => setUser(null))
+    api.session().then(({ user: current }) => setUser(current), () => setBootFailed(true))
   }, [])
+
+  // Offline at start: try again as soon as the device reconnects.
+  useEffect(() => {
+    if (!bootFailed) return
+    window.addEventListener('online', checkSession)
+    return () => window.removeEventListener('online', checkSession)
+  }, [bootFailed, checkSession])
 
   const userId = user?.id
   useEffect(() => {
@@ -77,28 +113,25 @@ function App() {
     return () => window.clearInterval(timer)
   }, [userId, loadMachines])
 
-  if (user === undefined) return <div className="boot-screen" aria-busy="true" aria-label="Carregando" />
+  if (user === undefined) {
+    return bootFailed ? <OfflineScreen onRetry={checkSession} /> : <div className="boot-screen" aria-busy="true" aria-label="Carregando" />
+  }
   if (user === null) return <AuthScreen onAuthenticated={setUser} />
 
-  const gatewayOnline = machines.some((machine) => machine.gatewayOnline)
+  const gateway = gatewayStatus === null ? { title: '...', text: 'Verificando o gateway.' }
+    : !gatewayStatus.gatewayConfigured ? { title: 'Não configurado', text: 'Defina GATEWAY_KEY e GATEWAY_OWNER_EMAIL com o seu e-mail na API.' }
+      : gatewayStatus.gatewayOnline ? { title: 'Online', text: 'Serviço da residência conectado.' }
+        : { title: 'Offline', text: 'Inicie o gateway no equipamento da residência.' }
 
   const wake = async (machine: Machine) => {
-    setMessage(`Enviando Magic Packet para ${machine.name}...`)
+    notify(`Enviando Magic Packet para ${machine.name}...`)
     try {
       const result = await api.wake(machine.id)
-      setMessage(result.message)
+      notify(result.message)
       await loadMachines()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Falha ao enviar o comando.')
+      warn(error instanceof Error ? error.message : 'Falha ao enviar o comando.')
     }
-  }
-
-  const signedOut = () => {
-    setShowAccount(false)
-    setMachines([])
-    setActivities([])
-    setLoadingMachines(true)
-    setUser(null)
   }
 
   const logout = () => {
@@ -110,10 +143,10 @@ function App() {
     if (!confirm(`Deseja ${verb} ${machine.name}? ${warning}`)) return
     try {
       const result = await api.action(machine.id, action)
-      setMessage(result.message)
+      notify(result.message)
       await loadMachines()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : `Não foi possível ${verb} a máquina.`)
+      warn(error instanceof Error ? error.message : `Não foi possível ${verb} a máquina.`)
     }
   }
 
@@ -122,7 +155,7 @@ function App() {
       const result = await api.agentKey(machine.id)
       setAgentSetup({ machine, key: result.key })
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Não foi possível gerar a chave do agente.')
+      warn(error instanceof Error ? error.message : 'Não foi possível gerar a chave do agente.')
     }
   }
 
@@ -170,7 +203,7 @@ function App() {
             </article>
             <article className="stat-card">
               <span className="stat-icon cyan"><Network size={21} /></span>
-              <div><small>GATEWAY</small><strong>{gatewayOnline ? 'Online' : 'Pendente'}</strong><p>{gatewayOnline ? 'Serviço da residência conectado' : 'Disponível após configurar o serviço na residência'}</p></div>
+              <div><small>GATEWAY</small><strong>{gateway.title}</strong><p>{gateway.text}</p></div>
             </article>
             <article className="stat-card">
               <span className="stat-icon violet">{user.twoFactorEnabled ? <ShieldCheck size={21} /> : <ShieldAlert size={21} />}</span>
@@ -183,7 +216,12 @@ function App() {
             </article>
           </section>
 
-          {message && <div className="toast" role="status"><Check size={17} /><span>{message}</span><button onClick={() => setMessage('')} aria-label="Fechar"><X size={16} /></button></div>}
+          {toast && (
+            <div className={`toast${toast.error ? ' error' : ''}`} role={toast.error ? 'alert' : 'status'}>
+              {toast.error ? <TriangleAlert size={17} /> : <Check size={17} />}<span>{toast.text}</span>
+              <button onClick={() => setToast(null)} aria-label="Fechar"><X size={16} /></button>
+            </div>
+          )}
 
           <div className="section-heading">
             <div><h2>Suas máquinas</h2><p>Dispositivos configurados para Wake-on-LAN.</p></div>
@@ -202,7 +240,7 @@ function App() {
                     try {
                     await api.removeMachine(machine.id)
                     await loadMachines()
-                    } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao remover.') }
+                    } catch (error) { warn(error instanceof Error ? error.message : 'Falha ao remover.') }
                   }
                 }} />
               ))}
@@ -223,7 +261,7 @@ function App() {
       {(showForm || editing) && <MachineDialog initial={editing} onClose={() => { setShowForm(false); setEditing(null) }} onSaved={async () => {
         setShowForm(false)
         setEditing(null)
-        setMessage('Máquina salva com sucesso.')
+        notify('Máquina salva com sucesso.')
         await loadMachines()
       }} />}
       {showAccount && <AccountDialog user={user} onClose={() => setShowAccount(false)} onUserChange={setUser} onSignedOut={signedOut} />}
@@ -233,8 +271,8 @@ function App() {
           <div className="dialog-body"><p>ID da máquina</p><code>{agentSetup.machine.id}</code><p>Chave do agente</p><code className="secret-key">{agentSetup.key}</code><p>Configure <code>REMOTE_WAKE_MACHINE_ID</code> e <code>REMOTE_WAKE_KEY</code> no serviço local. Veja o <a href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer">guia de instalação</a>.</p></div>
           <div className="dialog-actions"><button className="button secondary" onClick={async () => {
             if (!confirm('Revogar a chave atual? O agente precisará ser configurado novamente.')) return
-            try { await api.revokeAgent(agentSetup.machine.id); setAgentSetup(null); setMessage('Chave revogada. Abra a configuração para obter a nova chave.'); await loadMachines() }
-            catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao revogar.') }
+            try { await api.revokeAgent(agentSetup.machine.id); setAgentSetup(null); notify('Chave revogada. Abra a configuração para obter a nova chave.'); await loadMachines() }
+            catch (error) { warn(error instanceof Error ? error.message : 'Falha ao revogar.') }
           }}>Revogar chave</button><button className="button secondary" onClick={() => setAgentSetup(null)}>Fechar</button></div>
         </div>
       </div>}
@@ -286,6 +324,20 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       <p>Cadastre uma máquina para enviar seu primeiro Magic Packet.</p>
       <button className="button primary" onClick={onAdd}><Plus size={18} /> Cadastrar máquina</button>
     </section>
+  )
+}
+
+function OfflineScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="offline-screen">
+      <Brand />
+      <section className="offline-card" role="alert">
+        <span className="empty-icon"><WifiOff size={30} /></span>
+        <h1>Sem conexão com o servidor</h1>
+        <p>Verifique a internet do aparelho e se o Remote Wake está no ar. Sua sessão continua salva.</p>
+        <button className="button primary" onClick={onRetry}><RotateCcw size={17} /> Tentar novamente</button>
+      </section>
+    </main>
   )
 }
 
@@ -420,7 +472,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void
 }
 
 function MachineDialog({ initial, onClose, onSaved }: { initial: Machine | null; onClose: () => void; onSaved: () => void }) {
-  const [machine, setMachine] = useState<MachineInput>(initial ?? emptyMachine)
+  const [machine, setMachine] = useState<MachineInput>(initial ? toInput(initial) : emptyMachine)
   const [error, setError] = useState('')
 
   const update = <K extends keyof MachineInput>(key: K, value: MachineInput[K]) =>
@@ -458,15 +510,24 @@ function MachineDialog({ initial, onClose, onSaved }: { initial: Machine | null;
           <label>Hostname <span className="optional">OPCIONAL</span><input value={machine.hostname} onChange={(e) => update('hostname', e.target.value)} placeholder="desktop-casa" /></label>
           {error && <div className="error">{error}</div>}
         </div>
-        <div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button className="button primary"><Plus size={17} /> Salvar máquina</button></div>
+        <div className="dialog-actions"><button type="button" className="button secondary" onClick={onClose}>Cancelar</button><button className="button primary">{initial ? <><Check size={17} /> Salvar alterações</> : <><Plus size={17} /> Salvar máquina</>}</button></div>
       </form>
     </div>
   )
 }
 
 const formatMac = (mac: string) => mac.match(/.{1,2}/g)?.join(':') ?? mac
+// Only the editable fields, with values the inputs can hold (the API may send null).
+const toInput = (machine: Machine): MachineInput => ({
+  name: machine.name,
+  macAddress: formatMac(machine.macAddress),
+  hostname: machine.hostname ?? '',
+  broadcastAddress: machine.broadcastAddress,
+  wolPort: machine.wolPort,
+  wakeMethod: machine.wakeMethod,
+})
 const methodLabel = (method: WakeMethod) => ({
-  LocalBroadcast: 'Rede local / VPN', WakeOnWan: 'Wake-on-WAN', TailscaleGateway: 'Tailscale',
+  LocalBroadcast: 'Rede local / VPN', WakeOnWan: 'Wake-on-WAN', TailscaleGateway: 'Gateway residencial',
 })[method]
 
 export default App

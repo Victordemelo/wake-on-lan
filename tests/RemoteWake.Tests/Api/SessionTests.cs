@@ -31,6 +31,19 @@ public sealed class SessionTests(DefaultApi fixture) : IClassFixture<DefaultApi>
     }
 
     [Fact]
+    public async Task Session_check_answers_ok_for_visitors_and_members()
+    {
+        PostgresDatabase.SkipIfUnavailable();
+
+        var visitor = await ApiSession.Anonymous(fixture.Api).GetFromJsonAsync<SessionState>("/api/auth/session", ApiSession.Json, Ct);
+        var session = await ApiSession.RegisterAsync(fixture.Api);
+        var member = await session.GetAsync<SessionState>("/api/auth/session");
+
+        Assert.Null(visitor!.User);
+        Assert.Equal(session.User.Email, member.User!.Email);
+    }
+
+    [Fact]
     public async Task Behind_an_https_proxy_the_cookie_is_secure_and_host_only()
     {
         PostgresDatabase.SkipIfUnavailable();

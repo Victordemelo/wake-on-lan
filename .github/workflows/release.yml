@@ -38,10 +38,10 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/remote-wake-${{ matrix.component }}
+          # "latest" is added automatically for stable versions only (not for v1.0.0-rc.1).
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest
       - uses: docker/build-push-action@v7
         with:
           context: .

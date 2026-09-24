@@ -28,10 +28,9 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration co
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var mode = Setting("REMOTE_WAKE_MODE")?.ToLowerInvariant();
-        var apiUrl = Setting("REMOTE_WAKE_API_URL");
+        var uri = WorkerSettings.ParseApiUrl(Setting("REMOTE_WAKE_API_URL"));
         var key = Setting("REMOTE_WAKE_KEY");
-        if (mode is not ("gateway" or "agent") || !Uri.TryCreate(apiUrl, UriKind.Absolute, out var uri)
-            || uri.Scheme is not ("http" or "https") || string.IsNullOrWhiteSpace(key))
+        if (mode is not ("gateway" or "agent") || uri is null || string.IsNullOrWhiteSpace(key))
         {
             logger.LogError("Configure REMOTE_WAKE_MODE, REMOTE_WAKE_API_URL and REMOTE_WAKE_KEY.");
             Stop();

@@ -13,7 +13,7 @@ dotnet publish src/worker/RemoteWake.Worker.csproj -c Release -r win-x64 --self-
 Copy-Item deploy/worker.example.json worker.json
 ```
 
-Edite `worker.json` com a URL da API (inclua `/` final), ID e chave do painel.
+Edite `worker.json` com a URL da API, ID e chave do painel.
 O exemplo mantém `REMOTE_WAKE_DRY_RUN=true` e ações reais desabilitadas.
 Para um gateway, altere o modo para `gateway`, use a chave do gateway e informe
 `REMOTE_WAKE_ALLOWED_BROADCASTS`; o ID da máquina não é usado nesse modo.

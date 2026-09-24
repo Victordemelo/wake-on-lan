@@ -249,6 +249,7 @@ A interface usa um cookie de sessão `HttpOnly`. Toda requisição que altera da
 | `POST` | `/api/auth/register` | Não | Cria a conta (a primeira exige o código de configuração) |
 | `POST` | `/api/auth/login` | Não | Entra; com duas etapas ativas, pede o código |
 | `POST` | `/api/auth/logout` | Sessão | Encerra a sessão atual |
+| `GET` | `/api/auth/session` | Não | Conta conectada ou `null` (usado ao abrir o app) |
 | `GET` | `/api/auth/me` | Sessão | Dados da conta conectada |
 | `POST` | `/api/account/password` | Sessão | Troca a senha e desconecta os outros dispositivos |
 | `GET` | `/api/account/sessions` | Sessão | Dispositivos conectados |
@@ -268,6 +269,7 @@ A interface usa um cookie de sessão `HttpOnly`. Toda requisição que altera da
 | `POST` | `/api/machines/{id}/agent-key` | Sessão | Obtém a chave do agente da própria máquina |
 | `DELETE` | `/api/machines/{id}/agent-key` | Sessão | Revoga a chave atual do agente |
 | `GET` | `/api/activity` | Sessão | Últimas 100 ações e confirmações do proprietário |
+| `GET` | `/api/status` | Sessão | Se o gateway está configurado para a conta e online |
 | `GET` | `/api/gateway/poll` | Chave do gateway | Long polling do gateway residencial |
 | `POST` | `/api/gateway/jobs/{id}/complete` | Chave do gateway | Resultado de um envio do gateway |
 | `GET` | `/api/agent/{machineId}/poll` | Chave do agente | Long polling do agente |

@@ -69,3 +69,16 @@ public static class GatewayAllowList
         return true;
     }
 }
+
+public static class WorkerSettings
+{
+    // The API may live under a path (https://example.com/remotewake/). Without the final
+    // slash, relative requests such as "api/gateway/poll" would drop the last segment.
+    public static Uri? ParseApiUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var text = value.Trim();
+        if (!text.EndsWith('/')) text += "/";
+        return Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? uri : null;
+    }
+}

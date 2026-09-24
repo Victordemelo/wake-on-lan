@@ -6,6 +6,9 @@ public sealed record RegisterRequest(string? Name, string? Email, string? Passwo
 public sealed record LoginRequest(string? Email, string? Password, string? Code);
 public sealed record UserResponse(Guid Id, string Name, string Email, bool TwoFactorEnabled);
 public sealed record AuthResponse(UserResponse User);
+// Answer of GET /api/auth/session: null user when nobody is signed in.
+public sealed record SessionState(UserResponse? User);
+public sealed record StatusResponse(bool GatewayConfigured, bool GatewayOnline);
 public sealed record LoginChallenge(string Message, bool TwoFactorRequired);
 public sealed record RegistrationStatus(bool Open, bool SetupRequired);
 

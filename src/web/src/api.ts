@@ -28,6 +28,7 @@ export type SecurityOverview = {
   lastFailedCode?: string
 }
 export type TwoFactorSetup = { secret: string; uri: string }
+export type GatewayStatus = { gatewayConfigured: boolean; gatewayOnline: boolean }
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public twoFactorRequired = false) { super(message) }
@@ -36,15 +37,21 @@ export class ApiError extends Error {
 // The session lives in an HttpOnly cookie that scripts cannot read. The custom header
 // is required by the API on every state-changing call (protection against CSRF).
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Remote-Wake-Request': '1',
-      ...options.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      ...options,
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Remote-Wake-Request': '1',
+        ...options.headers,
+      },
+    })
+  } catch {
+    // fetch only rejects when the server is unreachable; its message is in English.
+    throw new ApiError('Sem conexão com o servidor. Verifique a internet e se o Remote Wake está no ar.', 0)
+  }
 
   if (!response.ok) {
     const problem = await response.json().catch(() => null)
@@ -61,7 +68,8 @@ const post = <T>(path: string, body?: unknown) =>
 
 export const api = {
   registration: () => request<RegistrationStatus>('/api/auth/registration'),
-  me: () => request<User>('/api/auth/me'),
+  session: () => request<{ user: User | null }>('/api/auth/session'),
+  status: () => request<GatewayStatus>('/api/status'),
   login: (email: string, password: string, code?: string) => post<AuthResponse>('/api/auth/login', { email, password, code }),
   register: (name: string, email: string, password: string, setupToken?: string) =>
     post<AuthResponse>('/api/auth/register', { name, email, password, setupToken }),

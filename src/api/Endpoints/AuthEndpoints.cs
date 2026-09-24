@@ -23,6 +23,15 @@ public static class AuthEndpoints
         auth.MapPost("/login", LoginAsync);
         auth.MapPost("/logout", LogoutAsync).DisableRateLimiting();
         auth.MapGet("/me", GetCurrentUserAsync).RequireAuthorization().DisableRateLimiting();
+        // Used by the web app on start: 200 for everyone, so visitors see no errors.
+        auth.MapGet("/session", GetSessionAsync).DisableRateLimiting();
+    }
+
+    private static async Task<IResult> GetSessionAsync(ClaimsPrincipal principal, AppDbContext database)
+    {
+        if (principal.Identity?.IsAuthenticated != true) return Results.Ok(new SessionState(null));
+        var user = await database.Users.AsNoTracking().SingleAsync(item => item.Id == principal.UserId());
+        return Results.Ok(new SessionState(AccountRules.ToResponse(user)));
     }
 
     private static async Task<IResult> GetRegistrationStatusAsync(AppDbContext database, IConfiguration configuration)

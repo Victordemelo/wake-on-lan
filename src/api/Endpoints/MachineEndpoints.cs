@@ -14,6 +14,7 @@ public static class MachineEndpoints
     public static void MapMachineEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/activity", ListActivityAsync).RequireAuthorization();
+        app.MapGet("/api/status", GetStatusAsync).RequireAuthorization();
 
         var machines = app.MapGroup("/api/machines").RequireAuthorization();
         machines.MapGet("/", ListAsync);
@@ -37,6 +38,16 @@ public static class MachineEndpoints
                 item.Machine != null ? item.Machine.Name : item.MachineName,
                 item.Action, item.Succeeded, item.Message, item.RequestedAt))
             .ToListAsync());
+    }
+
+    // Gateway state for this account: it only serves the account in GATEWAY_OWNER_EMAIL.
+    private static async Task<IResult> GetStatusAsync(ClaimsPrincipal principal, AppDbContext database,
+        RemoteJobBroker jobs, WorkerKeys keys)
+    {
+        var userId = principal.UserId();
+        var email = await database.Users.Where(user => user.Id == userId).Select(user => user.Email).SingleAsync();
+        var configured = keys.GatewayConfigured && keys.GatewayOwnerEmail == email;
+        return Results.Ok(new StatusResponse(configured, configured && jobs.GatewayOnline));
     }
 
     private static async Task<IResult> ListAsync(ClaimsPrincipal principal, AppDbContext database,
