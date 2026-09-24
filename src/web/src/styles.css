@@ -136,6 +136,8 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .device-icon { width: 45px; height: 45px; display: grid; place-items: center; color: var(--cyan); border: 1px solid rgba(39, 199, 245, .12); border-radius: 12px; background: rgba(39, 199, 245, .06); }
 .configured { display: flex; align-items: center; gap: .4rem; color: #79908a; font-size: .58rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; }
 .configured span { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); }
+.configured.offline { color: #7d8b93; }
+.configured.offline span { background: #56666f; }
 .machine-card h3 { margin: 1.1rem 0 .2rem; font-size: 1.05rem; }
 .machine-host { margin: 0; color: #617783; font-size: .68rem; }
 .machine-card dl { margin: 1.2rem 0; display: grid; gap: .48rem; }
@@ -145,8 +147,10 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .last-action { display: flex; align-items: center; gap: .4rem; margin: -.2rem 0 .9rem; color: #667c88; font-size: .6rem; }
 .card-actions { display: flex; gap: .55rem; margin-top: auto; }
 .power-grid { margin-top: .55rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
-.power-grid .button { min-width: 0; min-height: 38px; padding-inline: .45rem; font-size: .65rem; }
-.power-button { flex: 1; color: var(--mint); border-color: rgba(66, 245, 173, .18); background: rgba(66, 245, 173, .07); }
+.power-grid .button { min-width: 0; min-height: 38px; padding-inline: .45rem; white-space: nowrap; font-size: .65rem; }
+.power-button { flex: 1; white-space: nowrap; color: var(--mint); border-color: rgba(66, 245, 173, .18); background: rgba(66, 245, 173, .07); }
+.card-tools { margin-top: .8rem; padding-top: .75rem; display: flex; justify-content: flex-end; gap: .45rem; border-top: 1px solid var(--line); }
+.card-tools .icon-button { width: 34px; height: 34px; }
 .power-button:hover { color: #08271c; background: var(--mint); }
 .icon-button.danger { color: #8c6269; }
 .icon-button.danger:hover { color: #ff9ba5; border-color: rgba(255, 111, 125, .2); background: rgba(255, 111, 125, .07); }

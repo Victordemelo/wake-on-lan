@@ -1,4 +1,4 @@
-const CACHE = 'remote-wake-v2'
+const CACHE = 'remote-wake-v3'
 const SHELL = ['/', '/manifest.webmanifest', '/brand/remote-wake-mark.svg', '/brand/icon-192.png']
 
 self.addEventListener('install', (event) => {

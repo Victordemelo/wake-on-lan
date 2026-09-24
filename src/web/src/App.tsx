@@ -290,7 +290,7 @@ function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove
     <article className="machine-card">
       <div className="machine-top">
         <span className="device-icon"><Monitor size={23} /></span>
-        <span className="configured"><span /> {machine.agentOnline ? 'Agente online' : 'Agente offline'}</span>
+        <span className={`configured${machine.agentOnline ? '' : ' offline'}`}><span /> {machine.agentOnline ? 'Agente online' : 'Agente offline'}</span>
       </div>
       <h3>{machine.name}</h3>
       <p className="machine-host">{machine.hostname || 'Computador sem hostname'}</p>
@@ -303,15 +303,17 @@ function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove
       {machine.lastWakeRequestedAt && <p className="last-action"><Activity size={14} /> Último envio {formatDate(machine.lastWakeRequestedAt)}</p>}
       <div className="card-actions">
         <button className="button power-button" onClick={onWake}><Power size={18} /> Ligar máquina</button>
-        <button className="icon-button" onClick={onAgentSetup} aria-label={`Configurar agente de ${machine.name}`}><KeyRound size={16} /></button>
-        <button className="icon-button" onClick={onEdit} aria-label={`Editar ${machine.name}`}><Pencil size={16} /></button>
-        <button className="icon-button danger" onClick={onRemove} aria-label={`Remover ${machine.name}`}><Trash2 size={18} /></button>
       </div>
       <div className="power-grid" role="group" aria-label={`Ações de energia de ${machine.name}`}>
         {powerActions.map(({ action, label, icon: Icon }) => (
           <button key={action} className="button secondary" onClick={() => onAction(action)} disabled={!machine.agentOnline}
             title={machine.agentOnline ? undefined : 'Disponível quando o agente está online'}><Icon size={15} /> {label}</button>
         ))}
+      </div>
+      <div className="card-tools">
+        <button className="icon-button" onClick={onAgentSetup} aria-label={`Configurar agente de ${machine.name}`} title="Chave do agente"><KeyRound size={15} /></button>
+        <button className="icon-button" onClick={onEdit} aria-label={`Editar ${machine.name}`} title="Editar"><Pencil size={15} /></button>
+        <button className="icon-button danger" onClick={onRemove} aria-label={`Remover ${machine.name}`} title="Remover"><Trash2 size={15} /></button>
       </div>
     </article>
   )
