@@ -1,0 +1,57 @@
+using System.Net;
+using System.Net.Sockets;
+
+namespace RemoteWake.Shared;
+
+// Contract exchanged by the API and the workers (gateway and agent) over long polling.
+public sealed record RemoteJob(Guid Id, Guid MachineId, string Action, string? MacAddress = null,
+    string? BroadcastAddress = null, int WolPort = 9)
+{
+    public DateTimeOffset ExpiresAt { get; init; }
+}
+
+public sealed record RemoteJobResult(bool Succeeded, string Message);
+
+public static class RemoteActions
+{
+    public const string Wake = "wake";
+    public const string Shutdown = "shutdown";
+    public const string Restart = "restart";
+
+    // Power actions an agent may execute. Arbitrary commands are never accepted.
+    public static IReadOnlyList<string> Power { get; } = [Shutdown, Restart];
+
+    public static bool IsPowerAction(string? action) => action is not null && Power.Contains(action);
+}
+
+public static class PowerCommand
+{
+    // Native commands with a grace period, so the result is reported before the OS goes down.
+    public static (string FileName, string[] Arguments) For(string action, bool windows) => (action, windows) switch
+    {
+        (RemoteActions.Shutdown, true) => ("shutdown.exe", ["/s", "/t", "30"]),
+        (RemoteActions.Restart, true) => ("shutdown.exe", ["/r", "/t", "30"]),
+        (RemoteActions.Shutdown, false) => ("shutdown", ["-h", "+1"]),
+        (RemoteActions.Restart, false) => ("shutdown", ["-r", "+1"]),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Ação não permitida.")
+    };
+}
+
+public static class GatewayAllowList
+{
+    public static IReadOnlyList<string> Parse(string? value) =>
+        (value ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    // The gateway only sends to IPv4 destinations explicitly configured on the device.
+    public static bool Permits(IReadOnlyList<string> allowed, string? destination, int port, out IPAddress address)
+    {
+        address = IPAddress.None;
+        if (destination is null || port is < 1 or > 65535
+            || !allowed.Contains(destination, StringComparer.OrdinalIgnoreCase)
+            || !IPAddress.TryParse(destination, out var parsed)
+            || parsed.AddressFamily != AddressFamily.InterNetwork)
+            return false;
+        address = parsed;
+        return true;
+    }
+}

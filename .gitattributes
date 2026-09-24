@@ -1,0 +1,7 @@
+# Normalize line endings: LF in the repository and in every checkout, so
+# Windows and WSL clones show no spurious changes.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.woff2 binary

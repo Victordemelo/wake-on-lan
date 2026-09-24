@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using RemoteWake.Shared;
 
 var builder = Host.CreateApplicationBuilder(args);
 if (builder.Configuration["settings"] is { Length: > 0 } settings)
@@ -16,10 +17,6 @@ builder.Services.AddWindowsService(options => options.ServiceName =
 builder.Services.AddSystemd();
 builder.Services.AddHostedService<RemoteWorker>();
 await builder.Build().RunAsync();
-
-public sealed record RemoteJob(Guid Id, Guid MachineId, string Action, string? MacAddress,
-    string? BroadcastAddress, int WolPort, DateTimeOffset ExpiresAt);
-public sealed record RemoteJobResult(bool Succeeded, string Message);
 
 public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration configuration, IHostApplicationLifetime lifetime) : BackgroundService
 {
@@ -96,29 +93,21 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration co
 
     private async Task<RemoteJobResult> WakeAsync(RemoteJob job, CancellationToken cancellationToken)
     {
-        if (job.Action != "wake" || job.MacAddress is null || job.BroadcastAddress is null)
+        if (job.Action != RemoteActions.Wake || job.MacAddress is null)
             return new(false, "Pedido de wake inválido.");
-        var allowed = (Setting("REMOTE_WAKE_ALLOWED_BROADCASTS") ?? "")
-            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (!allowed.Contains(job.BroadcastAddress, StringComparer.OrdinalIgnoreCase)
-            || !IPAddress.TryParse(job.BroadcastAddress, out var destination)
-            || destination.AddressFamily != AddressFamily.InterNetwork || job.WolPort is < 1 or > 65535)
+        var allowed = GatewayAllowList.Parse(Setting("REMOTE_WAKE_ALLOWED_BROADCASTS"));
+        if (!GatewayAllowList.Permits(allowed, job.BroadcastAddress, job.WolPort, out var destination))
             return new(false, "Destino não está na lista permitida do gateway.");
+        if (!MagicPacket.TryNormalizeMac(job.MacAddress, out _)) return new(false, "Endereço MAC inválido.");
 
-        var normalized = new string(job.MacAddress.Where(Uri.IsHexDigit).ToArray());
-        if (normalized.Length != 12) return new(false, "Endereço MAC inválido.");
-        var mac = Convert.FromHexString(normalized);
-        var packet = new byte[102];
-        Array.Fill(packet, (byte)0xFF, 0, 6);
-        for (var offset = 6; offset < packet.Length; offset += 6) mac.CopyTo(packet, offset);
         using var udp = new UdpClient(AddressFamily.InterNetwork) { EnableBroadcast = true };
-        await udp.SendAsync(packet, new IPEndPoint(destination, job.WolPort), cancellationToken);
+        await udp.SendAsync(MagicPacket.Build(job.MacAddress), new IPEndPoint(destination, job.WolPort), cancellationToken);
         return new(true, "Magic Packet enviado pelo gateway residencial.");
     }
 
     private RemoteJobResult RunAction(RemoteJob job, Guid machineId)
     {
-        if (job.MachineId != machineId || job.Action is not ("shutdown" or "restart"))
+        if (job.MachineId != machineId || !RemoteActions.IsPowerAction(job.Action))
             return new(false, "Ação não permitida para este agente.");
         if (Setting("REMOTE_WAKE_DRY_RUN") == "true")
             return new(true, $"Simulação: {job.Action} recebido; nenhuma ação executada.");
@@ -127,29 +116,15 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration co
 
         try
         {
-            var windows = OperatingSystem.IsWindows();
-            var start = new ProcessStartInfo(windows ? "shutdown.exe" : "shutdown")
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            if (windows)
-            {
-                start.ArgumentList.Add(job.Action == "shutdown" ? "/s" : "/r");
-                start.ArgumentList.Add("/t");
-                start.ArgumentList.Add("30");
-            }
-            else
-            {
-                start.ArgumentList.Add(job.Action == "shutdown" ? "-h" : "-r");
-                start.ArgumentList.Add("+1");
-            }
+            var (fileName, arguments) = PowerCommand.For(job.Action, OperatingSystem.IsWindows());
+            var start = new ProcessStartInfo(fileName) { UseShellExecute = false, CreateNoWindow = true };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
             using var process = Process.Start(start);
             if (process is null) return new(false, "Não foi possível iniciar o comando do sistema.");
             if (!process.WaitForExit(5000))
                 return new(false, "O comando do sistema não respondeu em cinco segundos.");
             return process.ExitCode == 0
-                ? new(true, job.Action == "shutdown" ? "Desligamento agendado." : "Reinicialização agendada.")
+                ? new(true, job.Action == RemoteActions.Shutdown ? "Desligamento agendado." : "Reinicialização agendada.")
                 : new(false, $"Comando do sistema retornou código {process.ExitCode}.");
         }
         catch (Exception exception)

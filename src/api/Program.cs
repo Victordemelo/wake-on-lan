@@ -14,6 +14,7 @@ using RemoteWake.Api.Contracts;
 using RemoteWake.Api.Data;
 using RemoteWake.Api.Models;
 using RemoteWake.Api.Services;
+using RemoteWake.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<MagicPacketService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(new RemoteJobBrokerOptions());
 builder.Services.AddSingleton<RemoteJobBroker>();
 builder.Services.AddSingleton<WorkerKeys>();
 builder.Services.AddRateLimiter(options =>
@@ -29,7 +32,12 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = 429;
     options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = builder.Configuration.GetValue("RateLimits:AuthPerMinute", 20),
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0
+        }));
 });
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -69,8 +77,7 @@ var app = builder.Build();
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var database = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await database.Database.EnsureCreatedAsync();
-    await SchemaUpgrades.ApplyAsync(database);
+    await DatabaseMigrator.MigrateAsync(database, app.Logger);
 }
 
 app.UseForwardedHeaders();
@@ -187,7 +194,7 @@ machines.MapPost("/", async (
     AppDbContext database,
     RemoteJobBroker jobs) =>
 {
-    if (!ValidateMachine(request, out var normalizedMac, out var error))
+    if (!MachineRules.TryValidate(request, out var normalizedMac, out var error))
     {
         return Results.BadRequest(new { message = error });
     }
@@ -216,7 +223,7 @@ machines.MapPut("/{id:guid}", async (
 {
     var machine = await FindOwnedMachine(id, principal, database);
     if (machine is null) return Results.NotFound();
-    if (!ValidateMachine(request, out var normalizedMac, out var error))
+    if (!MachineRules.TryValidate(request, out var normalizedMac, out var error))
         return Results.BadRequest(new { message = error });
 
     machine.Name = request.Name.Trim();
@@ -267,7 +274,7 @@ machines.MapPost("/{id:guid}/wake", async (
             message = "O gateway residencial está offline.";
         else
         {
-            var result = await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), machine.Id, "wake",
+            var result = await jobs.DispatchAsync(new RemoteJob(Guid.NewGuid(), machine.Id, RemoteActions.Wake,
                 machine.MacAddress, machine.BroadcastAddress, machine.WolPort), true, cancellationToken);
             success = result.Succeeded;
             message = result.Message;
@@ -329,7 +336,7 @@ machines.MapPost("/{id:guid}/actions", async (Guid id, ActionRequest request,
     ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
     if (await FindOwnedMachine(id, principal, database) is null) return Results.NotFound();
-    if (request.Action is not ("shutdown" or "restart"))
+    if (!RemoteActions.IsPowerAction(request.Action))
         return Results.BadRequest(new { message = "Ação não permitida." });
     var result = !jobs.AgentOnline(id)
         ? new RemoteJobResult(false, "O agente da máquina está offline.")
@@ -391,37 +398,6 @@ static Task<Machine?> FindOwnedMachine(Guid id, ClaimsPrincipal principal, AppDb
 {
     var userId = GetUserId(principal);
     return database.Machines.SingleOrDefaultAsync(machine => machine.Id == id && machine.OwnerId == userId);
-}
-
-static bool ValidateMachine(MachineRequest request, out string normalizedMac, out string error)
-{
-    if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Trim().Length is < 2 or > 100)
-    {
-        normalizedMac = string.Empty;
-        error = "Informe um nome com pelo menos 2 caracteres.";
-        return false;
-    }
-
-    if (!MagicPacketService.TryNormalizeMac(request.MacAddress ?? "", out normalizedMac))
-    {
-        error = "Informe um endereço MAC válido.";
-        return false;
-    }
-
-    if (request.WolPort is < 1 or > 65535)
-    {
-        error = "A porta deve estar entre 1 e 65535.";
-        return false;
-    }
-
-    if (!Enum.IsDefined(request.WakeMethod) || string.IsNullOrWhiteSpace(request.BroadcastAddress) || request.BroadcastAddress.Length > 253)
-    {
-        error = "Informe o endereço de broadcast, IP público ou DDNS.";
-        return false;
-    }
-
-    error = string.Empty;
-    return true;
 }
 
 static MachineResponse ToResponse(Machine machine, bool agentOnline, bool gatewayOnline) => new(

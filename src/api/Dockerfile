@@ -1,7 +1,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /source
+COPY src/shared/RemoteWake.Shared.csproj src/shared/
 COPY src/api/RemoteWake.Api.csproj src/api/
 RUN dotnet restore src/api/RemoteWake.Api.csproj
+COPY src/shared/ src/shared/
 COPY src/api/ src/api/
 RUN dotnet publish src/api/RemoteWake.Api.csproj -c Release -o /app --no-restore
 

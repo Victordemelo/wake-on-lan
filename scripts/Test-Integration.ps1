@@ -36,7 +36,11 @@ function WaitOnline([string]$Property) {
 }
 try {
     Push-Location $repo
-    if (!$SkipBuild) { DockerRun @('compose','build','api','gateway') | Out-Host }
+    # Explicit tags: independent of the Compose project name and of the local .env.
+    if (!$SkipBuild) {
+        DockerRun @('build','-q','-f','src/api/Dockerfile','-t','remote-wake-test-api','.') | Out-Host
+        DockerRun @('build','-q','-f','src/worker/Dockerfile','-t','remote-wake-test-worker','.') | Out-Host
+    }
     DockerRun @('network','create',$prefix) | Out-Null
     $db = "$prefix-db"; $api = "$prefix-api"
     $containers += $db
@@ -53,7 +57,7 @@ try {
         '-e','Jwt__Key=integration-only-key-at-least-thirty-two-characters',
         '-e','Jwt__Issuer=RemoteWake','-e','Jwt__Audience=RemoteWake.Web',
         '-e',"Gateway__Key=$gatewayKey",'-e','Gateway__OwnerEmail=owner@example.test',
-        '-e','Agent__MasterKey=integration-only-agent-master-key','-e','Registration__Open=true','remote-wake-api') | Out-Null
+        '-e','Agent__MasterKey=integration-only-agent-master-key','-e','Registration__Open=true','remote-wake-test-api') | Out-Null
     $port = (DockerRun @('port',$api,'8080/tcp')).Trim().Split(':')[-1]
     $script:base = "http://127.0.0.1:$port"
     for ($i=0; $i -lt 50; $i++) {
@@ -77,11 +81,11 @@ try {
     $containers += $gateway
     DockerRun @('run','-d','--name',$gateway,'--network',$prefix,'-e','REMOTE_WAKE_MODE=gateway',
         '-e',"REMOTE_WAKE_API_URL=http://${api}:8080/",'-e',"REMOTE_WAKE_KEY=$gatewayKey",
-        '-e','REMOTE_WAKE_ALLOWED_BROADCASTS=127.0.0.1','remote-wake-gateway') | Out-Null
+        '-e','REMOTE_WAKE_ALLOWED_BROADCASTS=127.0.0.1','remote-wake-test-worker') | Out-Null
     $containers += $agent
     DockerRun @('run','-d','--name',$agent,'--network',$prefix,'-e','REMOTE_WAKE_MODE=agent',
         '-e',"REMOTE_WAKE_API_URL=http://${api}:8080/",'-e',"REMOTE_WAKE_KEY=$key",
-        '-e',"REMOTE_WAKE_MACHINE_ID=$id",'-e','REMOTE_WAKE_DRY_RUN=true','remote-wake-gateway') | Out-Null
+        '-e',"REMOTE_WAKE_MACHINE_ID=$id",'-e','REMOTE_WAKE_DRY_RUN=true','remote-wake-test-worker') | Out-Null
     WaitOnline gatewayOnline
     WaitOnline agentOnline
     Check ((Request POST "/api/machines/$id/wake" -Headers $auth).succeeded) 'Gateway wake (loopback only)'
@@ -102,7 +106,8 @@ try {
     Request GET /api/gateway/poll -Headers @{'X-Remote-Wake-Key'='invalid'} -Expected 401 | Out-Null
     # Exercise additive upgrade against the previous schema in this disposable database only.
     DockerRun @('stop',$api) | Out-Null
-    'ALTER TABLE "Machines" DROP COLUMN "AgentKeyVersion"; ALTER TABLE "WakeAttempts" DROP COLUMN "Action"; DROP TABLE "SchemaVersions";' |
+    # Without the migration history the API treats the database as created by version 0.1 (EnsureCreated).
+    'ALTER TABLE "Machines" DROP COLUMN "AgentKeyVersion"; ALTER TABLE "WakeAttempts" DROP COLUMN "Action"; DROP TABLE "__EFMigrationsHistory";' |
         & docker exec -i $db psql -v ON_ERROR_STOP=1 -U postgres -d test | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Could not prepare legacy schema fixture.' }
     DockerRun @('start',$api) | Out-Null

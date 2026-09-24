@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/api/">
+    <Project Path="src/api/RemoteWake.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/shared/">
+    <Project Path="src/shared/RemoteWake.Shared.csproj" />
+  </Folder>
+  <Folder Name="/src/worker/">
+    <Project Path="src/worker/RemoteWake.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RemoteWake.Tests/RemoteWake.Tests.csproj" />
+  </Folder>
+</Solution>

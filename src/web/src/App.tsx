@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
-  LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Server, Settings,
+  LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
   ShieldCheck, Trash2, Wifi, X, RotateCcw, KeyRound, Pencil,
 } from 'lucide-react'
 import { api, ApiError, ActivityItem, AuthResponse, Machine, MachineInput, session, WakeMethod } from './api'
@@ -31,8 +31,7 @@ function App() {
   const [loadingMachines, setLoadingMachines] = useState(true)
   const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
 
-  const loadMachines = async (quiet = false) => {
-    if (!quiet) setLoadingMachines(true)
+  const loadMachines = useCallback(async (quiet = false) => {
     try {
       const [items, history] = await Promise.all([api.machines(), api.activity()])
       setMachines(items)
@@ -43,16 +42,17 @@ function App() {
         setAuthenticated(false)
       } else if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
     } finally {
-      if (!quiet) setLoadingMachines(false)
+      setLoadingMachines(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     if (!authenticated) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state only changes after the requests resolve
     void loadMachines()
     const timer = window.setInterval(() => void loadMachines(true), 15000)
     return () => window.clearInterval(timer)
-  }, [authenticated])
+  }, [authenticated, loadMachines])
 
   if (!authenticated) {
     return <AuthScreen onAuthenticated={(auth) => {

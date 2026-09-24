@@ -1,18 +1,24 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using RemoteWake.Shared;
 
 namespace RemoteWake.Api.Services;
 
-public sealed record RemoteJob(Guid Id, Guid MachineId, string Action, string? MacAddress = null,
-    string? BroadcastAddress = null, int WolPort = 9)
+public sealed record RemoteJobBrokerOptions
 {
-    public DateTimeOffset ExpiresAt { get; init; } = DateTimeOffset.UtcNow.AddSeconds(20);
+    // A worker never executes a job older than this, even if it arrives late.
+    public TimeSpan JobLifetime { get; init; } = TimeSpan.FromSeconds(20);
+    // How long a long-poll request waits for a job before returning 204.
+    public TimeSpan PollTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    // How long the requesting user waits for the worker's confirmation.
+    public TimeSpan ResultTimeout { get; init; } = TimeSpan.FromSeconds(25);
+    // A worker counts as online if it polled within this window.
+    public TimeSpan OnlineWindow { get; init; } = TimeSpan.FromSeconds(35);
 }
-public sealed record RemoteJobResult(bool Succeeded, string Message);
 
 // Jobs live only while the requesting HTTP call is active. A worker never receives
 // an old power command after an API restart or after the request times out.
-public sealed class RemoteJobBroker
+public sealed class RemoteJobBroker(TimeProvider time, RemoteJobBrokerOptions options)
 {
     private sealed record Pending(RemoteJob Job, bool Gateway, TaskCompletionSource<RemoteJobResult> Completion);
 
@@ -23,22 +29,23 @@ public sealed class RemoteJobBroker
     private readonly ConcurrentDictionary<string, byte> active = new();
     private long gatewaySeenTicks;
 
-    public bool GatewayOnline => DateTimeOffset.UtcNow.UtcTicks - Interlocked.Read(ref gatewaySeenTicks)
-        < TimeSpan.FromSeconds(35).Ticks;
+    public bool GatewayOnline => time.GetUtcNow().UtcTicks - Interlocked.Read(ref gatewaySeenTicks)
+        < options.OnlineWindow.Ticks;
     public bool AgentOnline(Guid machineId) => agentSeen.TryGetValue(machineId, out var seen)
-        && DateTimeOffset.UtcNow - seen < TimeSpan.FromSeconds(35);
+        && time.GetUtcNow() - seen < options.OnlineWindow;
 
     public async Task<RemoteJobResult> DispatchAsync(RemoteJob job, bool gateway, CancellationToken cancellationToken)
     {
         var activeKey = $"{gateway}:{job.MachineId}";
         if (!active.TryAdd(activeKey, 0)) return new(false, "Já existe uma solicitação em andamento para esta máquina.");
+        job = job with { ExpiresAt = time.GetUtcNow() + options.JobLifetime };
         var completion = new TaskCompletionSource<RemoteJobResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[job.Id] = new Pending(job, gateway, completion);
         var queue = gateway ? gatewayQueue : agentQueues.GetOrAdd(job.MachineId, _ => Channel.CreateUnbounded<Guid>());
         queue.Writer.TryWrite(job.Id);
         try
         {
-            return await completion.Task.WaitAsync(TimeSpan.FromSeconds(25), cancellationToken);
+            return await completion.Task.WaitAsync(options.ResultTimeout, time, cancellationToken);
         }
         catch (TimeoutException)
         {
@@ -57,18 +64,18 @@ public sealed class RemoteJobBroker
 
     public async Task<RemoteJob?> PollAsync(bool gateway, Guid machineId, CancellationToken cancellationToken)
     {
-        if (gateway) Interlocked.Exchange(ref gatewaySeenTicks, DateTimeOffset.UtcNow.UtcTicks);
-        else agentSeen[machineId] = DateTimeOffset.UtcNow;
+        if (gateway) Interlocked.Exchange(ref gatewaySeenTicks, time.GetUtcNow().UtcTicks);
+        else agentSeen[machineId] = time.GetUtcNow();
 
         var queue = gateway ? gatewayQueue : agentQueues.GetOrAdd(machineId, _ => Channel.CreateUnbounded<Guid>());
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(20));
+        using var timeout = new CancellationTokenSource(options.PollTimeout, time);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
             while (true)
             {
-                var id = await queue.Reader.ReadAsync(timeout.Token);
-                if (pending.TryGetValue(id, out var current) && current.Job.ExpiresAt > DateTimeOffset.UtcNow) return current.Job;
+                var id = await queue.Reader.ReadAsync(linked.Token);
+                if (pending.TryGetValue(id, out var current) && current.Job.ExpiresAt > time.GetUtcNow()) return current.Job;
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
