@@ -29,6 +29,8 @@ public sealed class RemoteJobBroker(TimeProvider time, RemoteJobBrokerOptions op
     private readonly ConcurrentDictionary<string, byte> active = new();
     private long gatewaySeenTicks;
 
+    public DateTimeOffset StartedAt { get; } = time.GetUtcNow();
+
     public bool GatewayOnline => time.GetUtcNow().UtcTicks - Interlocked.Read(ref gatewaySeenTicks)
         < options.OnlineWindow.Ticks;
     public bool AgentOnline(Guid machineId) => agentSeen.TryGetValue(machineId, out var seen)

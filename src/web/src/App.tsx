@@ -2,12 +2,23 @@ import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
   Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
-  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, X, RotateCcw, KeyRound, Pencil,
+  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake,
 } from 'lucide-react'
-import { api, ApiError, ActivityItem, Machine, MachineInput, RegistrationStatus, User, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, Machine, MachineInput, PowerAction, RegistrationStatus, User, WakeMethod } from './api'
 import AccountDialog from './components/AccountDialog'
 import ProjectShowcase from './components/ui/ProjectShowcase'
 import { formatDate } from './format'
+
+const powerActions: { action: PowerAction; label: string; verb: string; icon: typeof Power; warning: string }[] = [
+  { action: 'shutdown', label: 'Desligar', verb: 'desligar', icon: Power, warning: 'Salve o trabalho aberto nessa máquina antes de continuar.' },
+  { action: 'restart', label: 'Reiniciar', verb: 'reiniciar', icon: RotateCcw, warning: 'Salve o trabalho aberto nessa máquina antes de continuar.' },
+  { action: 'suspend', label: 'Suspender', verb: 'suspender', icon: Moon, warning: 'Para acordá-la depois, use Ligar; o Wake-on-LAN precisa estar ativo também na suspensão.' },
+  { action: 'hibernate', label: 'Hibernar', verb: 'hibernar', icon: Snowflake, warning: 'A hibernação precisa estar habilitada no sistema da máquina.' },
+]
+
+const activityLabels: Record<string, string> = {
+  wake: 'Ligar', online: 'Ligou', shutdown: 'Desligar', restart: 'Reiniciar', suspend: 'Suspender', hibernate: 'Hibernar',
+}
 
 const emptyMachine: MachineInput = {
   name: '', macAddress: '', hostname: '', broadcastAddress: '255.255.255.255',
@@ -33,6 +44,7 @@ function App() {
   const [activities, setActivities] = useState<ActivityItem[]>([])
   const [message, setMessage] = useState('')
   const [loadingMachines, setLoadingMachines] = useState(true)
+  const [serverOnline, setServerOnline] = useState(true)
   const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
 
   const loadMachines = useCallback(async (quiet = false) => {
@@ -40,9 +52,13 @@ function App() {
       const [items, history] = await Promise.all([api.machines(), api.activity()])
       setMachines(items)
       setActivities(history)
+      setServerOnline(true)
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) setUser(null)
-      else if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
+      else {
+        setServerOnline(false)
+        if (!quiet) setMessage('Não foi possível atualizar o painel. Tente novamente.')
+      }
     } finally {
       setLoadingMachines(false)
     }
@@ -89,15 +105,15 @@ function App() {
     void api.logout().catch(() => undefined).finally(signedOut)
   }
 
-  const powerAction = async (machine: Machine, action: 'shutdown' | 'restart') => {
-    const label = action === 'shutdown' ? 'desligar' : 'reiniciar'
-    if (!confirm(`Deseja ${label} ${machine.name}? Salve o trabalho aberto nessa máquina antes de continuar.`)) return
+  const powerAction = async (machine: Machine, action: PowerAction) => {
+    const { verb, warning } = powerActions.find((item) => item.action === action)!
+    if (!confirm(`Deseja ${verb} ${machine.name}? ${warning}`)) return
     try {
       const result = await api.action(machine.id, action)
       setMessage(result.message)
       await loadMachines()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : `Não foi possível ${label} a máquina.`)
+      setMessage(error instanceof Error ? error.message : `Não foi possível ${verb} a máquina.`)
     }
   }
 
@@ -123,7 +139,7 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Settings size={18} /> Instalação</a>
-          <div className="local-status"><span /><div><strong>Servidor local</strong><small>Operacional</small></div></div>
+          <div className={`local-status${serverOnline ? '' : ' offline'}`} role="status"><span /><div><strong>Servidor</strong><small>{serverOnline ? 'Operacional' : 'Sem conexão'}</small></div></div>
           <button className="nav-item logout" onClick={logout}><LogOut size={18} /> Sair</button>
         </div>
       </aside>
@@ -194,10 +210,10 @@ function App() {
             </section>
           )}
           <section className="activity-section" id="activity">
-            <div className="section-heading"><div><h2>Atividades recentes</h2><p>Últimas 100 tentativas de ligar, desligar e reiniciar.</p></div></div>
+            <div className="section-heading"><div><h2>Atividades recentes</h2><p>Últimas 100 ações de energia e confirmações de que a máquina ligou.</p></div></div>
             {activities.length === 0 ? <p className="activity-empty">Nenhuma ação registrada.</p> : <div className="activity-list">{activities.map((item) => <article key={item.id} className="activity-row">
               <span className={item.succeeded ? 'activity-success' : 'activity-failure'}>{item.succeeded ? 'Confirmado' : 'Sem sucesso'}</span>
-              <div><strong>{item.machineName} · {({ wake: 'Ligar', shutdown: 'Desligar', restart: 'Reiniciar' } as Record<string, string>)[item.action] ?? item.action}</strong><p>{item.message}</p></div>
+              <div><strong>{item.machineName} · {activityLabels[item.action] ?? item.action}</strong><p>{item.message}</p></div>
               <time dateTime={item.requestedAt}>{formatDate(item.requestedAt)}</time>
             </article>)}</div>}
           </section>
@@ -226,7 +242,7 @@ function App() {
   )
 }
 
-function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove }: { machine: Machine; onWake: () => void; onAction: (action: 'shutdown' | 'restart') => void; onAgentSetup: () => void; onEdit: () => void; onRemove: () => void }) {
+function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove }: { machine: Machine; onWake: () => void; onAction: (action: PowerAction) => void; onAgentSetup: () => void; onEdit: () => void; onRemove: () => void }) {
   return (
     <article className="machine-card">
       <div className="machine-top">
@@ -244,13 +260,15 @@ function MachineCard({ machine, onWake, onAction, onAgentSetup, onEdit, onRemove
       {machine.lastWakeRequestedAt && <p className="last-action"><Activity size={14} /> Último envio {formatDate(machine.lastWakeRequestedAt)}</p>}
       <div className="card-actions">
         <button className="button power-button" onClick={onWake}><Power size={18} /> Ligar máquina</button>
+        <button className="icon-button" onClick={onAgentSetup} aria-label={`Configurar agente de ${machine.name}`}><KeyRound size={16} /></button>
         <button className="icon-button" onClick={onEdit} aria-label={`Editar ${machine.name}`}><Pencil size={16} /></button>
         <button className="icon-button danger" onClick={onRemove} aria-label={`Remover ${machine.name}`}><Trash2 size={18} /></button>
       </div>
-      <div className="card-actions secondary-actions">
-        <button className="button secondary" onClick={() => onAction('shutdown')} disabled={!machine.agentOnline}><Power size={15} /> Desligar</button>
-        <button className="button secondary" onClick={() => onAction('restart')} disabled={!machine.agentOnline}><RotateCcw size={15} /> Reiniciar</button>
-        <button className="icon-button" onClick={onAgentSetup} aria-label={`Configurar agente de ${machine.name}`}><KeyRound size={16} /></button>
+      <div className="power-grid" role="group" aria-label={`Ações de energia de ${machine.name}`}>
+        {powerActions.map(({ action, label, icon: Icon }) => (
+          <button key={action} className="button secondary" onClick={() => onAction(action)} disabled={!machine.agentOnline}
+            title={machine.agentOnline ? undefined : 'Disponível quando o agente está online'}><Icon size={15} /> {label}</button>
+        ))}
       </div>
     </article>
   )

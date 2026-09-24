@@ -95,6 +95,7 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .sidebar-bottom { margin-top: auto; display: grid; gap: .3rem; }
 .local-status { margin: .6rem .35rem; padding: .8rem; display: flex; align-items: center; gap: .65rem; border: 1px solid var(--line); border-radius: 10px; background: #ffffff03; }
 .local-status > span { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgba(66, 245, 173, .08); }
+.local-status.offline > span { background: #ff6f7d; box-shadow: 0 0 0 5px rgba(255, 111, 125, .1); }
 .local-status div { display: grid; gap: .1rem; }
 .local-status strong { color: #aebec7; font-size: .65rem; }
 .local-status small { color: #59717e; font-size: .56rem; }
@@ -141,8 +142,8 @@ input:focus, select:focus { border-color: rgba(66, 245, 173, .7); box-shadow: 0 
 .machine-card dd { margin: 0; color: #aebdc6; font-size: .64rem; overflow-wrap: anywhere; text-align: right; }
 .last-action { display: flex; align-items: center; gap: .4rem; margin: -.2rem 0 .9rem; color: #667c88; font-size: .6rem; }
 .card-actions { display: flex; gap: .55rem; margin-top: auto; }
-.secondary-actions { margin-top: .55rem; }
-.secondary-actions .button { flex: 1; min-width: 0; padding-inline: .45rem; font-size: .65rem; }
+.power-grid { margin-top: .55rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
+.power-grid .button { min-width: 0; min-height: 38px; padding-inline: .45rem; font-size: .65rem; }
 .power-button { flex: 1; color: var(--mint); border-color: rgba(66, 245, 173, .18); background: rgba(66, 245, 173, .07); }
 .power-button:hover { color: #08271c; background: var(--mint); }
 .icon-button.danger { color: #8c6269; }

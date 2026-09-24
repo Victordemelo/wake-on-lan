@@ -6,17 +6,21 @@ namespace RemoteWake.Tests.Unit;
 public sealed class RemoteActionsTests
 {
     [Theory]
-    [InlineData("shutdown")]
-    [InlineData("restart")]
-    public void Power_actions_are_allowed(string action)
+    [InlineData("shutdown", false)]
+    [InlineData("restart", false)]
+    [InlineData("suspend", true)]
+    [InlineData("hibernate", true)]
+    public void Power_actions_are_allowed(string action, bool sleep)
     {
         Assert.True(RemoteActions.IsPowerAction(action));
+        Assert.Equal(sleep, RemoteActions.IsSleep(action));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("wake")]
+    [InlineData("online")]
     [InlineData("SHUTDOWN")]
     [InlineData("shutdown; rm -rf /")]
     [InlineData("format c:")]
@@ -30,12 +34,24 @@ public sealed class RemoteActionsTests
     [InlineData("restart", true, "shutdown.exe", "/r /t 30")]
     [InlineData("shutdown", false, "shutdown", "-h +1")]
     [InlineData("restart", false, "shutdown", "-r +1")]
-    public void Actions_map_to_native_commands_with_a_grace_period(string action, bool windows, string file, string arguments)
+    [InlineData("hibernate", true, "shutdown.exe", "/h")]
+    [InlineData("suspend", false, "systemctl", "suspend")]
+    [InlineData("hibernate", false, "systemctl", "hibernate")]
+    public void Actions_map_to_native_commands(string action, bool windows, string file, string arguments)
     {
         var command = PowerCommand.For(action, windows);
 
         Assert.Equal(file, command.FileName);
         Assert.Equal(arguments, string.Join(' ', command.Arguments));
+    }
+
+    [Fact]
+    public void Windows_suspend_does_not_use_rundll32_which_may_hibernate()
+    {
+        var command = PowerCommand.For(RemoteActions.Suspend, windows: true);
+
+        Assert.Equal("powershell.exe", command.FileName);
+        Assert.Contains("SetSuspendState('Suspend'", command.Arguments[^1]);
     }
 
     [Fact]

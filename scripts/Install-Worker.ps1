@@ -39,6 +39,10 @@ if ($mode -eq 'gateway') {
 }
 # The agent runs as SYSTEM to schedule shutdown; the gateway uses LocalService.
 New-Service @parameters | Out-Null
+# Restart after crashes (10 s, 30 s, then every 60 s; counters reset after a day). A clean
+# stop with an error, such as a revoked key, is not retried: it needs a new configuration.
+& sc.exe failure $serviceName reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Failed to configure automatic service recovery.' }
 Start-Service -Name $serviceName
 Write-Host "Installed $serviceName. Protect or remove the original settings file: $settingsFile"
 Write-Host 'The example configuration uses dry-run. Validate before enabling real power actions.'

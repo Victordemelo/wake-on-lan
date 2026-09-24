@@ -30,10 +30,12 @@ public static class WorkerEndpoints
 
         var agent = app.MapGroup("/api/agent/{machineId:guid}");
         agent.MapGet("/poll", async (Guid machineId, HttpRequest request, WorkerKeys keys, AppDbContext database,
-            RemoteJobBroker jobs, CancellationToken cancellationToken) =>
+            RemoteJobBroker jobs, TimeProvider time, CancellationToken cancellationToken) =>
         {
             var version = await AgentKeyVersionAsync(machineId, database, cancellationToken);
             if (version is null || !keys.IsAgent(machineId, version.Value, request.Headers[KeyHeader])) return Results.Unauthorized();
+            if (!jobs.AgentOnline(machineId))
+                await BootConfirmation.RecordIfRecentWakeAsync(machineId, database, jobs, time, cancellationToken);
             var job = await jobs.PollAsync(false, machineId, cancellationToken);
             // The key may have been revoked (or the machine removed) while the poll was waiting.
             if (await AgentKeyVersionAsync(machineId, database, cancellationToken) != version) return Results.Unauthorized();

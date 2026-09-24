@@ -1,4 +1,5 @@
-FROM node:24-alpine AS build
+# The static build is architecture independent: run it natively, serve with the target's nginx.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
 COPY src/web/package*.json ./
 RUN npm ci --no-audit --no-fund

@@ -92,6 +92,42 @@ public sealed class WorkerTests(DefaultApi fixture) : IClassFixture<DefaultApi>
         Assert.Equal(HttpStatusCode.NoContent, (await Worker(replacement).GetAsync($"/api/agent/{machine.Id}/poll", Ct)).StatusCode);
     }
 
+    [Fact]
+    public async Task An_agent_connecting_after_a_wake_confirms_that_the_machine_started()
+    {
+        PostgresDatabase.SkipIfUnavailable();
+        var session = await ApiSession.RegisterAsync(fixture.Api);
+        var machine = await session.CreateMachineAsync(ApiSession.Machine(destination: "127.0.0.1"));
+        var key = (await (await session.Http.PostAsync($"/api/machines/{machine.Id}/agent-key", null, Ct))
+            .Content.ReadFromJsonAsync<AgentKey>(ApiSession.Json, Ct))!.Key;
+        (await session.Http.PostAsync($"/api/machines/{machine.Id}/wake", null, Ct)).EnsureSuccessStatusCode();
+
+        var agent = Worker(key);
+        await agent.GetAsync($"/api/agent/{machine.Id}/poll", Ct);
+        await agent.GetAsync($"/api/agent/{machine.Id}/poll", Ct);
+
+        var history = await session.GetAsync<List<ActivityItem>>("/api/activity");
+        var online = Assert.Single(history, item => item.Action == RemoteActions.Online);
+        Assert.True(online.Succeeded);
+        Assert.StartsWith("A máquina ligou", online.Message);
+    }
+
+    [Fact]
+    public async Task An_agent_connecting_without_a_recent_wake_is_not_a_confirmation()
+    {
+        PostgresDatabase.SkipIfUnavailable();
+        var session = await ApiSession.RegisterAsync(fixture.Api);
+        var machine = await session.CreateMachineAsync();
+        var key = (await (await session.Http.PostAsync($"/api/machines/{machine.Id}/agent-key", null, Ct))
+            .Content.ReadFromJsonAsync<AgentKey>(ApiSession.Json, Ct))!.Key;
+
+        await Worker(key).GetAsync($"/api/agent/{machine.Id}/poll", Ct);
+
+        Assert.Empty(await session.GetAsync<List<ActivityItem>>("/api/activity"));
+        var hibernate = await session.Http.PostAsJsonAsync($"/api/machines/{machine.Id}/actions", new { action = "hibernate" }, Ct);
+        Assert.NotEqual(System.Net.HttpStatusCode.BadRequest, hibernate.StatusCode);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("wrong-key")]

@@ -17,22 +17,36 @@ public static class RemoteActions
     public const string Wake = "wake";
     public const string Shutdown = "shutdown";
     public const string Restart = "restart";
+    public const string Suspend = "suspend";
+    public const string Hibernate = "hibernate";
+    // Recorded by the API when an agent comes online shortly after a wake request.
+    public const string Online = "online";
 
     // Power actions an agent may execute. Arbitrary commands are never accepted.
-    public static IReadOnlyList<string> Power { get; } = [Shutdown, Restart];
+    public static IReadOnlyList<string> Power { get; } = [Shutdown, Restart, Suspend, Hibernate];
 
     public static bool IsPowerAction(string? action) => action is not null && Power.Contains(action);
+
+    // Sleep states take effect at once, so agents run them only after reporting the result.
+    public static bool IsSleep(string? action) => action is Suspend or Hibernate;
 }
 
 public static class PowerCommand
 {
-    // Native commands with a grace period, so the result is reported before the OS goes down.
+    // Shutdown and restart keep the OS grace period, so the result is reported before
+    // the machine goes down; the agent itself delays suspend and hibernate.
     public static (string FileName, string[] Arguments) For(string action, bool windows) => (action, windows) switch
     {
         (RemoteActions.Shutdown, true) => ("shutdown.exe", ["/s", "/t", "30"]),
         (RemoteActions.Restart, true) => ("shutdown.exe", ["/r", "/t", "30"]),
+        // "rundll32 powrprof.dll,SetSuspendState" hibernates when hibernation is enabled; .NET suspends.
+        (RemoteActions.Suspend, true) => ("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+            "Add-Type -AssemblyName System.Windows.Forms; [void][System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"]),
+        (RemoteActions.Hibernate, true) => ("shutdown.exe", ["/h"]),
         (RemoteActions.Shutdown, false) => ("shutdown", ["-h", "+1"]),
         (RemoteActions.Restart, false) => ("shutdown", ["-r", "+1"]),
+        (RemoteActions.Suspend, false) => ("systemctl", ["suspend"]),
+        (RemoteActions.Hibernate, false) => ("systemctl", ["hibernate"]),
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Ação não permitida.")
     };
 }

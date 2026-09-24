@@ -105,31 +105,73 @@ public sealed class RemoteWorker(ILogger<RemoteWorker> logger, IConfiguration co
         return new(true, "Magic Packet enviado pelo gateway residencial.");
     }
 
+    private static readonly Dictionary<string, string> Nouns = new()
+    {
+        [RemoteActions.Shutdown] = "desligamento",
+        [RemoteActions.Restart] = "reinicialização",
+        [RemoteActions.Suspend] = "suspensão",
+        [RemoteActions.Hibernate] = "hibernação"
+    };
+
+    private static readonly Dictionary<string, string> Confirmations = new()
+    {
+        [RemoteActions.Shutdown] = "Desligamento agendado.",
+        [RemoteActions.Restart] = "Reinicialização agendada.",
+        [RemoteActions.Suspend] = "Suspensão em 5 segundos.",
+        [RemoteActions.Hibernate] = "Hibernação em 5 segundos."
+    };
+
     private RemoteJobResult RunAction(RemoteJob job, Guid machineId)
     {
         if (job.MachineId != machineId || !RemoteActions.IsPowerAction(job.Action))
             return new(false, "Ação não permitida para este agente.");
         if (Setting("REMOTE_WAKE_DRY_RUN") == "true")
-            return new(true, $"Simulação: {job.Action} recebido; nenhuma ação executada.");
+            return new(true, $"Simulação: pedido de {Nouns[job.Action]} recebido; nenhuma ação executada.");
         if (Setting("REMOTE_WAKE_POWER_ACTIONS_ENABLED") != "true")
             return new(false, "Ações de energia desativadas neste agente.");
 
+        var command = PowerCommand.For(job.Action, OperatingSystem.IsWindows());
+        if (RemoteActions.IsSleep(job.Action))
+        {
+            // The machine stops answering as soon as it sleeps: report first, then act.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                try
+                {
+                    using var process = Process.Start(StartInfo(command));
+                    if (process is not null && process.WaitForExit(TimeSpan.FromMinutes(2)) && process.ExitCode != 0)
+                        logger.LogWarning("{Action} failed with exit code {ExitCode}. Check that it is enabled on this system.",
+                            job.Action, process.ExitCode);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Could not start {Action}.", job.Action);
+                }
+            });
+            return new(true, Confirmations[job.Action]);
+        }
+
         try
         {
-            var (fileName, arguments) = PowerCommand.For(job.Action, OperatingSystem.IsWindows());
-            var start = new ProcessStartInfo(fileName) { UseShellExecute = false, CreateNoWindow = true };
-            foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            using var process = Process.Start(start);
+            using var process = Process.Start(StartInfo(command));
             if (process is null) return new(false, "Não foi possível iniciar o comando do sistema.");
             if (!process.WaitForExit(5000))
                 return new(false, "O comando do sistema não respondeu em cinco segundos.");
             return process.ExitCode == 0
-                ? new(true, job.Action == RemoteActions.Shutdown ? "Desligamento agendado." : "Reinicialização agendada.")
+                ? new(true, Confirmations[job.Action])
                 : new(false, $"Comando do sistema retornou código {process.ExitCode}.");
         }
         catch (Exception exception)
         {
             return new(false, $"Falha ao agendar a ação: {exception.Message}");
         }
+    }
+
+    private static ProcessStartInfo StartInfo((string FileName, string[] Arguments) command)
+    {
+        var start = new ProcessStartInfo(command.FileName) { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var argument in command.Arguments) start.ArgumentList.Add(argument);
+        return start;
     }
 }

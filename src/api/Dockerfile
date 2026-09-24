@@ -1,11 +1,13 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+# Compile on the build machine's architecture and target the image's one (amd64/arm64).
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
+ARG TARGETARCH
 WORKDIR /source
 COPY src/shared/RemoteWake.Shared.csproj src/shared/
 COPY src/api/RemoteWake.Api.csproj src/api/
-RUN dotnet restore src/api/RemoteWake.Api.csproj
+RUN dotnet restore src/api/RemoteWake.Api.csproj -a $TARGETARCH
 COPY src/shared/ src/shared/
 COPY src/api/ src/api/
-RUN dotnet publish src/api/RemoteWake.Api.csproj -c Release -o /app --no-restore
+RUN dotnet publish src/api/RemoteWake.Api.csproj -c Release -a $TARGETARCH -o /app --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
 WORKDIR /app

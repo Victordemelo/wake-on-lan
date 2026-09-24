@@ -2,6 +2,7 @@ export type User = { id: string; name: string; email: string; twoFactorEnabled: 
 export type AuthResponse = { user: User }
 export type RegistrationStatus = { open: boolean; setupRequired: boolean }
 export type WakeMethod = 'LocalBroadcast' | 'WakeOnWan' | 'TailscaleGateway'
+export type PowerAction = 'shutdown' | 'restart' | 'suspend' | 'hibernate'
 export type Machine = {
   id: string
   name: string
@@ -76,7 +77,7 @@ export const api = {
   updateMachine: (id: string, machine: MachineInput) => request<Machine>(`/api/machines/${id}`, { method: 'PUT', body: JSON.stringify(machine) }),
   removeMachine: (id: string) => request<void>(`/api/machines/${id}`, { method: 'DELETE' }),
   wake: (id: string) => post<{ message: string }>(`/api/machines/${id}/wake`),
-  action: (id: string, action: 'shutdown' | 'restart') => post<{ message: string }>(`/api/machines/${id}/actions`, { action }),
+  action: (id: string, action: PowerAction) => post<{ message: string }>(`/api/machines/${id}/actions`, { action }),
   agentKey: (id: string) => post<{ machineId: string; key: string }>(`/api/machines/${id}/agent-key`),
   revokeAgent: (id: string) => request<void>(`/api/machines/${id}/agent-key`, { method: 'DELETE' }),
 }
