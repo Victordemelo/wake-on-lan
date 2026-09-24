@@ -34,6 +34,11 @@ export class ApiError extends Error {
   constructor(message: string, public status: number, public twoFactorRequired = false) { super(message) }
 }
 
+// Called when the session is no longer valid (expired, revoked or password changed
+// on another device), so the app can drop the account data at once.
+let onUnauthorized: (() => void) | null = null
+export const setUnauthorizedHandler = (handler: (() => void) | null) => { onUnauthorized = handler }
+
 // The session lives in an HttpOnly cookie that scripts cannot read. The custom header
 // is required by the API on every state-changing call (protection against CSRF).
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -54,6 +59,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
+    // Sign-in endpoints answer 401 for wrong credentials; everywhere else it means the session ended.
+    if (response.status === 401 && !path.startsWith('/api/auth/')) onUnauthorized?.()
     const problem = await response.json().catch(() => null)
     const fallback = response.status === 429 ? 'Muitas tentativas. Aguarde um minuto.' : 'Não foi possível concluir a operação.'
     throw new ApiError(problem?.message ?? problem?.detail ?? fallback, response.status, Boolean(problem?.twoFactorRequired))

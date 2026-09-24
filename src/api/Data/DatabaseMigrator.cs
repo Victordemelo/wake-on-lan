@@ -20,6 +20,10 @@ public static class DatabaseMigrator
                     logger.LogWarning("Banco criado por uma versão sem migrações; registrando o esquema atual como linha de base.");
                     await BaselineLegacyDatabaseAsync(database, cancellationToken);
                 }
+                // With the history table in place, EF Core does not log a failed query
+                // against the missing table when it starts a brand-new database.
+                await database.Database.ExecuteSqlRawAsync(
+                    database.GetService<IHistoryRepository>().GetCreateIfNotExistsScript(), cancellationToken);
                 await database.Database.MigrateAsync(cancellationToken);
             }
             finally

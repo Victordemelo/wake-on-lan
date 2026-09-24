@@ -4,7 +4,7 @@ import {
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
   ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, WifiOff, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake, TriangleAlert,
 } from 'lucide-react'
-import { api, ApiError, ActivityItem, GatewayStatus, Machine, MachineInput, PowerAction, RegistrationStatus, User, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, GatewayStatus, Machine, MachineInput, PowerAction, RegistrationStatus, setUnauthorizedHandler, User, WakeMethod } from './api'
 import AccountDialog from './components/AccountDialog'
 import ProjectShowcase from './components/ui/ProjectShowcase'
 import { formatDate } from './format'
@@ -68,6 +68,11 @@ function App() {
     setLoadingMachines(true)
     setUser(null)
   }, [])
+
+  useEffect(() => {
+    setUnauthorizedHandler(signedOut)
+    return () => setUnauthorizedHandler(null)
+  }, [signedOut])
 
   const loadMachines = useCallback(async (quiet = false) => {
     try {
