@@ -4,7 +4,7 @@
   "short_name": "Remote Wake",
   "description": "Ligue e gerencie seus computadores remotamente.",
   "lang": "pt-BR",
-  "start_url": "/",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#07111f",

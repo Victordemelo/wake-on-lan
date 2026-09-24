@@ -24,7 +24,7 @@ test('changing the password signs out the other devices', async ({ page, account
   await expect(dialog.getByRole('status')).toContainText('Outro dispositivo foi desconectado')
 
   const phonePage = await phone.newPage()
-  await phonePage.goto('/')
+  await phonePage.goto('/login')
   await expect(phonePage.getByRole('heading', { name: 'Bem-vindo de volta' })).toBeVisible()
   await phone.close()
 })

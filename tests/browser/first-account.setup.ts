@@ -7,6 +7,7 @@ setup('the first account needs the setup code from the API log', async ({ page }
   expectConsoleError('403')
 
   await page.goto('/')
+  await page.locator('.lp-header').getByRole('link', { name: 'Entrar' }).click()
   await expect(page.getByRole('heading', { name: 'Crie a primeira conta' })).toBeVisible()
   const form = page.locator('form.auth-card')
   await form.locator('input[name=setupToken]').fill('CODIGO-ERRADO')

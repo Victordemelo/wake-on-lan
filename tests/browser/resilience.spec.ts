@@ -3,7 +3,7 @@ import { createMachine, csrf, expect, expectConsoleError, test } from './fixture
 test('without a connection the app says so and recovers', async ({ page }) => {
   expectConsoleError('ERR_FAILED')
   await page.route('**/api/auth/session', (route) => route.abort())
-  await page.goto('/')
+  await page.goto('/login')
   await expect(page.getByRole('heading', { name: 'Sem conexão com o servidor' })).toBeVisible()
 
   await page.unroute('**/api/auth/session')

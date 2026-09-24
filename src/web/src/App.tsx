@@ -1,13 +1,17 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import {
-  Activity, ArrowRight, Check, ChevronRight, Eye, EyeOff, LayoutDashboard,
+  Activity, Check, ChevronRight, LayoutDashboard,
   LogOut, Monitor, Network, Plus, Power, Radio, ScrollText, Settings,
-  ShieldAlert, ShieldCheck, Trash2, UserRound, Wifi, WifiOff, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake, TriangleAlert,
+  ShieldAlert, ShieldCheck, Trash2, UserRound, WifiOff, X, RotateCcw, KeyRound, Pencil, Moon, Snowflake, TriangleAlert,
 } from 'lucide-react'
-import { api, ApiError, ActivityItem, GatewayStatus, Machine, MachineInput, PowerAction, RegistrationStatus, setUnauthorizedHandler, User, WakeMethod } from './api'
+import { api, ApiError, ActivityItem, GatewayStatus, Machine, MachineInput, PowerAction, setUnauthorizedHandler, User, WakeMethod } from './api'
 import AccountDialog from './components/AccountDialog'
-import ProjectShowcase from './components/ui/ProjectShowcase'
+import Brand from './components/Brand'
+import LandingPage from './components/landing/LandingPage'
+import LoginPage from './components/LoginPage'
 import { formatDate } from './format'
+import { navigate, usePath } from './navigation'
+import { links } from './project'
 
 const powerActions: { action: PowerAction; label: string; verb: string; icon: typeof Power; warning: string }[] = [
   { action: 'shutdown', label: 'Desligar', verb: 'desligar', icon: Power, warning: 'Salve o trabalho aberto nessa máquina antes de continuar.' },
@@ -23,15 +27,6 @@ const activityLabels: Record<string, string> = {
 const emptyMachine: MachineInput = {
   name: '', macAddress: '', hostname: '', broadcastAddress: '255.255.255.255',
   wolPort: 9, wakeMethod: 'LocalBroadcast',
-}
-
-function Brand({ compact = false }: { compact?: boolean }) {
-  return (
-    <a className={`brand ${compact ? 'brand-compact' : ''}`} href="/" aria-label="Remote Wake">
-      <span className="brand-symbol"><img src="/brand/remote-wake-mark.svg" alt="" /></span>
-      {!compact && <span>Remote <strong>Wake</strong></span>}
-    </a>
-  )
 }
 
 type Toast = { text: string; error: boolean }
@@ -50,6 +45,7 @@ function App() {
   const [loadingMachines, setLoadingMachines] = useState(true)
   const [serverOnline, setServerOnline] = useState(true)
   const [agentSetup, setAgentSetup] = useState<{ machine: Machine; key: string } | null>(null)
+  const path = usePath()
 
   const notify = (text: string) => setToast({ text, error: false })
   const warn = (text: string) => setToast({ text, error: true })
@@ -67,6 +63,7 @@ function App() {
     setToast(null)
     setLoadingMachines(true)
     setUser(null)
+    navigate('/login', { replace: true })
   }, [])
 
   useEffect(() => {
@@ -109,6 +106,10 @@ function App() {
     return () => window.removeEventListener('online', checkSession)
   }, [bootFailed, checkSession])
 
+  useEffect(() => {
+    if (user && path !== '/') navigate('/', { replace: true })
+  }, [user, path])
+
   const userId = user?.id
   useEffect(() => {
     if (!userId) return
@@ -121,7 +122,8 @@ function App() {
   if (user === undefined) {
     return bootFailed ? <OfflineScreen onRetry={checkSession} /> : <div className="boot-screen" aria-busy="true" aria-label="Carregando" />
   }
-  if (user === null) return <AuthScreen onAuthenticated={setUser} />
+  // Visitors see the project presentation; the sign-in form lives at /login.
+  if (user === null) return path === '/login' ? <LoginPage onAuthenticated={setUser} /> : <LandingPage />
 
   const gateway = gatewayStatus === null ? { title: '...', text: 'Verificando o gateway.' }
     : !gatewayStatus.gatewayConfigured ? { title: 'Não configurado', text: 'Defina GATEWAY_KEY e GATEWAY_OWNER_EMAIL com o seu e-mail na API.' }
@@ -171,12 +173,12 @@ function App() {
         <nav className="side-nav" aria-label="Navegação principal">
           <a className="nav-item active" href="#machines"><LayoutDashboard size={18} /> Visão geral</a>
           <a className="nav-item" href="#machines"><Monitor size={18} /> Máquinas <span>{machines.length}</span></a>
-          <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Radio size={18} /> Gateway <small>Guia</small></a>
+          <a className="nav-item" href={links.remoteSetup} target="_blank" rel="noreferrer"><Radio size={18} /> Gateway <small>Guia</small></a>
           <a className="nav-item" href="#activity"><ScrollText size={18} /> Atividades</a>
           <button className="nav-item" onClick={() => setShowAccount(true)}><UserRound size={18} /> Minha conta</button>
         </nav>
         <div className="sidebar-bottom">
-          <a className="nav-item" href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer"><Settings size={18} /> Instalação</a>
+          <a className="nav-item" href={links.remoteSetup} target="_blank" rel="noreferrer"><Settings size={18} /> Instalação</a>
           <div className={`local-status${serverOnline ? '' : ' offline'}`} role="status"><span /><div><strong>Servidor</strong><small>{serverOnline ? 'Operacional' : 'Sem conexão'}</small></div></div>
           <button className="nav-item logout" onClick={logout}><LogOut size={18} /> Sair</button>
         </div>
@@ -273,7 +275,7 @@ function App() {
       {agentSetup && <div className="dialog-backdrop" onMouseDown={() => setAgentSetup(null)}>
         <div className="dialog agent-setup" role="dialog" aria-modal="true" aria-label="Configurar agente" onMouseDown={(event) => event.stopPropagation()}>
           <div className="dialog-title"><div><span className="dialog-icon"><KeyRound size={20} /></span><div><h2>Agente de {agentSetup.machine.name}</h2><p>Guarde esta chave somente no computador controlado.</p></div></div><button className="icon-button" onClick={() => setAgentSetup(null)} aria-label="Fechar"><X size={20} /></button></div>
-          <div className="dialog-body"><p>ID da máquina</p><code>{agentSetup.machine.id}</code><p>Chave do agente</p><code className="secret-key">{agentSetup.key}</code><p>Configure <code>REMOTE_WAKE_MACHINE_ID</code> e <code>REMOTE_WAKE_KEY</code> no serviço local. Veja o <a href="https://github.com/Victordemelo/wake-on-lan/blob/main/docs/REMOTE_SETUP.md" target="_blank" rel="noreferrer">guia de instalação</a>.</p></div>
+          <div className="dialog-body"><p>ID da máquina</p><code>{agentSetup.machine.id}</code><p>Chave do agente</p><code className="secret-key">{agentSetup.key}</code><p>Configure <code>REMOTE_WAKE_MACHINE_ID</code> e <code>REMOTE_WAKE_KEY</code> no serviço local. Veja o <a href={links.remoteSetup} target="_blank" rel="noreferrer">guia de instalação</a>.</p></div>
           <div className="dialog-actions"><button className="button secondary" onClick={async () => {
             if (!confirm('Revogar a chave atual? O agente precisará ser configurado novamente.')) return
             try { await api.revokeAgent(agentSetup.machine.id); setAgentSetup(null); notify('Chave revogada. Abra a configuração para obter a nova chave.'); await loadMachines() }
@@ -345,136 +347,6 @@ function OfflineScreen({ onRetry }: { onRetry: () => void }) {
         <button className="button primary" onClick={onRetry}><RotateCcw size={17} /> Tentar novamente</button>
       </section>
     </main>
-  )
-}
-
-function ProjectCallToAction() {
-  return (
-    <div className="showcase-cta">
-      <div><span>QUER ACOMPANHAR?</span><strong>O Remote Wake está sendo construído em público.</strong></div>
-      <a href="https://github.com/Victordemelo/wake-on-lan" target="_blank" rel="noreferrer">Ver projeto no GitHub <ArrowRight size={17} /></a>
-    </div>
-  )
-}
-
-type AuthMode = 'login' | 'register' | 'two-factor'
-
-function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
-  const [registration, setRegistration] = useState<RegistrationStatus>({ open: false, setupRequired: false })
-  const [mode, setMode] = useState<AuthMode>('login')
-  // Kept only in memory, to finish the login after the two-step code.
-  const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
-
-  useEffect(() => {
-    api.registration().then((status) => {
-      setRegistration(status)
-      if (status.setupRequired) setMode('register')
-    }, () => undefined)
-  }, [])
-
-  const switchMode = (next: AuthMode) => {
-    setMode(next)
-    setError('')
-    if (next !== 'two-factor') setCredentials(null)
-  }
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    const email = String(data.get('email') ?? credentials?.email ?? '')
-    const password = String(data.get('password') ?? credentials?.password ?? '')
-    setLoading(true)
-    setError('')
-    try {
-      const result = mode === 'register'
-        ? await api.register(String(data.get('name')), email, password, registration.setupRequired ? String(data.get('setupToken')) : undefined)
-        : await api.login(email, password, mode === 'two-factor' ? String(data.get('code')) : undefined)
-      onAuthenticated(result.user)
-    } catch (problem) {
-      if (problem instanceof ApiError && problem.twoFactorRequired && mode === 'login') {
-        setCredentials({ email, password })
-        setMode('two-factor')
-      } else {
-        setError(problem instanceof Error ? problem.message : 'Não foi possível entrar.')
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const heading = mode === 'two-factor'
-    ? { eyebrow: 'VERIFICAÇÃO EM DUAS ETAPAS', title: 'Digite o código', text: 'Abra o aplicativo autenticador ou use um dos códigos de recuperação.' }
-    : mode === 'register' && registration.setupRequired
-      ? { eyebrow: 'CONFIGURAÇÃO INICIAL', title: 'Crie a primeira conta', text: 'Ela será a conta principal desta instalação.' }
-      : mode === 'register'
-        ? { eyebrow: 'NOVA CONTA', title: 'Crie seu acesso', text: 'Leva menos de um minuto para começar.' }
-        : { eyebrow: 'ACESSO SEGURO', title: 'Bem-vindo de volta', text: 'Entre para acessar suas máquinas.' }
-
-  return (
-    <div className="landing-page">
-      <header className="landing-header">
-        <Brand />
-        <nav><a href="#project">O projeto</a><a className="button primary" href="#access">Entrar</a></nav>
-      </header>
-
-      <ProjectShowcase><ProjectCallToAction /></ProjectShowcase>
-
-      <section className="landing-access" id="access">
-        <div className="access-background"><i /><i /><i /></div>
-        <div className="access-copy">
-          <p className="eyebrow">COMECE AGORA</p>
-          <h2>Seu computador,<br />ao alcance de um toque.</h2>
-          <p>Entre no painel para cadastrar máquinas, enviar Magic Packets e preparar seu ambiente para o controle remoto.</p>
-          <div className="access-features">
-            <span><ShieldCheck size={17} /> Seus dados no seu servidor</span>
-            <span><Wifi size={17} /> Wake-on-LAN, VPN e Tailscale</span>
-          </div>
-          <div className="creator-signature"><span>VM</span><div><strong>Victor de Melo da Rosa</strong><small>Estudante de Engenharia da Computação · Criador do Remote Wake</small></div></div>
-        </div>
-
-        <form className="auth-card" onSubmit={submit}>
-          <div className="auth-card-logo"><Brand compact /></div>
-          <p className="eyebrow">{heading.eyebrow}</p>
-          <h2>{heading.title}</h2>
-          <p>{heading.text}</p>
-          {mode === 'two-factor' ? (
-            <label>Código de verificação
-              <input key="code" name="code" required autoFocus autoComplete="one-time-code" placeholder="123456 ou código de recuperação" />
-            </label>
-          ) : (
-            <>
-              {mode === 'register' && registration.setupRequired && (
-                <label>Código de configuração
-                  <input name="setupToken" required autoComplete="off" spellCheck={false} placeholder="XXXX-XXXX-XXXX" />
-                  <small>Aparece nos logs da API: <code>docker compose logs api</code></small>
-                </label>
-              )}
-              {mode === 'register' && <label>Nome completo<input name="name" minLength={2} required autoComplete="name" placeholder="Como devemos chamar você?" /></label>}
-              <label>E-mail<input name="email" type="email" required autoComplete="email" placeholder="voce@exemplo.com" /></label>
-              <label>Senha
-                <span className="password-field"><input name="password" type={showPassword ? 'text' : 'password'} minLength={8} required autoComplete={mode === 'register' ? 'new-password' : 'current-password'} placeholder="Mínimo de 8 caracteres" /><button type="button" onClick={() => setShowPassword(!showPassword)} aria-label="Mostrar senha">{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></span>
-              </label>
-            </>
-          )}
-          {error && <div className="error" role="alert">{error}</div>}
-          <button className="button primary submit-button" disabled={loading}>
-            {loading ? 'Aguarde...' : mode === 'register' ? 'Criar conta' : mode === 'two-factor' ? 'Verificar' : 'Entrar no painel'} {!loading && <ArrowRight size={18} />}
-          </button>
-          {mode === 'two-factor' && <div className="auth-switch"><span>Entrou com outra conta?</span><button type="button" onClick={() => switchMode('login')}>Voltar</button></div>}
-          {mode !== 'two-factor' && registration.open && !registration.setupRequired && (
-            <div className="auth-switch">
-              <span>{mode === 'register' ? 'Já possui uma conta?' : 'Primeira vez por aqui?'}</span>
-              <button type="button" onClick={() => switchMode(mode === 'register' ? 'login' : 'register')}>{mode === 'register' ? 'Fazer login' : 'Criar conta'}</button>
-            </div>
-          )}
-        </form>
-      </section>
-
-      <footer className="landing-footer"><span>Projeto criado por Victor de Melo da Rosa · Estudante de Engenharia da Computação</span><a href="https://github.com/Victordemelo/wake-on-lan" target="_blank" rel="noreferrer">MIT License · GitHub ↗</a></footer>
-    </div>
   )
 }
 

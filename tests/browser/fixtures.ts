@@ -46,7 +46,7 @@ export function expectConsoleError(part: string) {
 }
 
 export async function signIn(page: Page, email: string, password: string) {
-  await page.goto('/')
+  await page.goto('/login')
   const form = page.locator('form.auth-card')
   await form.locator('input[name=email]').fill(email)
   await form.locator('input[name=password]').fill(password)
