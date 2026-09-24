@@ -28,3 +28,7 @@ Thumbs.db
 publish/
 worker.json
 
+
+# Playwright
+tests/browser/test-results/
+tests/browser/playwright-report/

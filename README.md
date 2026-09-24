@@ -214,6 +214,14 @@ export REMOTE_WAKE_TEST_POSTGRES="Host=localhost;Username=postgres;Password=post
 
 Na interface: `npm run lint` e `npm run build` em `src/web`.
 
+Os testes de navegador (Playwright, Chromium em desktop e celular) ficam em `tests/browser` e cobrem a primeira conta com o código de configuração, máquinas, gateway, troca de senha, verificação em duas etapas, sessões, falta de conexão e a tela do celular. Qualquer erro no console do navegador, inclusive violação da CSP, reprova o teste. Para rodar:
+
+```bash
+pwsh ./scripts/Test-Browser.ps1
+```
+
+O script sobe uma instância descartável (banco, API, interface e gateway de demonstração, com portas livres e sem usar o seu `.env`), executa os testes no contêiner oficial do Playwright, sem instalar navegador na máquina, e remove tudo ao final. A imagem do Playwright ocupa cerca de 3,5 GB no Docker.
+
 Com Docker em execução, `./scripts/Test-Integration.ps1` (PowerShell 7 ou Windows PowerShell) cria banco, API, gateway e agente descartáveis e testa sessão, isolamento entre usuários, edição, histórico, revogação e reinício. O gateway envia apenas para loopback e o agente simula as ações; nenhum PC é desligado.
 
 O GitHub Actions executa tudo isso a cada push e pull request (`.github/workflows/ci.yml`). Tags `v*.*.*` publicam as imagens no GitHub Container Registry (`release.yml`).

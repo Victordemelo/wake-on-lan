@@ -11,7 +11,7 @@ Obrigado por considerar uma contribuição ao Remote Wake.
 5. Confirme que os testes passam (o GitHub Actions executa os mesmos passos):
    - `dotnet test --solution RemoteWake.slnx` com `REMOTE_WAKE_TEST_POSTGRES` apontando para um PostgreSQL de testes;
    - `npm run lint` e `npm run build` em `src/web`;
-   - `./scripts/Test-Integration.ps1` com Docker em execução.
+   - `./scripts/Test-Integration.ps1` e `./scripts/Test-Browser.ps1` com Docker em execução.
 6. Abra o pull request explicando motivação, implementação e forma de testar.
 
 ## Banco de dados

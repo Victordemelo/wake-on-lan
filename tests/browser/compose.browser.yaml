@@ -1,0 +1,7 @@
+# Applied on top of compose.yaml by scripts/Test-Browser.ps1: the tests create and
+# sign in many accounts within a minute from the same address.
+services:
+  api:
+    environment:
+      RateLimits__AuthPerMinute: "1000"
+      RateLimits__CommandsPerMinute: "1000"
